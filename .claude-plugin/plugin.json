@@ -1,7 +1,7 @@
 {
   "name": "lucid",
   "description": "Turn Claude into a CFO-grade analyst on top of the Lucid financial-data platform. Bundles the read-only Lucid MCP connector plus skills for monthly close review, P&L and margin analysis, cash and runway, budget-vs-actual, balance-sheet review, drill-down/audit, and board packs.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Lucid"
   },
