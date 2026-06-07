@@ -1,0 +1,16 @@
+{
+  "name": "lucid-skills",
+  "owner": {
+    "name": "Lucid"
+  },
+  "metadata": {
+    "description": "Lucid CFO plugin — the read-only Lucid financial-data connector plus CFO analysis skills."
+  },
+  "plugins": [
+    {
+      "name": "lucid",
+      "source": "./",
+      "description": "CFO-grade analysis on top of the Lucid financial-data platform: close review, P&L/margins, cash & runway, budget-vs-actual, balance sheet, drill-down/audit, and board packs."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lucid": {
+      "type": "http",
+      "url": "https://lucid-mcp-xnaw7oe2ga-uc.a.run.app/mcp"
+    }
+  }
+}
