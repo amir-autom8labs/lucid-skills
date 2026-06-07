@@ -103,8 +103,8 @@ BVA is a flow (see period grammar) and spills past the tool-result limit, so:
   helper's `bva` subcommand and the variance-report script against the path:
 
   ```bash
-  python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py bva <spilled.json> --top 12
-  python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals <spilled.json>
+  python ${CLAUDE_PLUGIN_ROOT}/skills/budget-vs-actual/scripts/lucid_utils.py bva <spilled.json> --top 12
+  python ${CLAUDE_PLUGIN_ROOT}/skills/budget-vs-actual/scripts/lucid_utils.py totals <spilled.json>
   python ${CLAUDE_PLUGIN_ROOT}/skills/budget-vs-actual/scripts/variance_report.py <spilled.json> --top 10
   ```
 

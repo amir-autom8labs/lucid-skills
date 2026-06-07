@@ -49,6 +49,10 @@ _PLUGIN_ROOT = os.environ.get(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
 )
 sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
+# Self-contained: this skill bundles lucid_utils.py beside this script. Prepend
+# this script's own dir LAST so it wins on sys.path — the import then resolves in
+# any runtime (incl. claude.ai), whether or not CLAUDE_PLUGIN_ROOT is set.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lucid_utils import (  # noqa: E402  (import after sys.path tweak)
     fmt,

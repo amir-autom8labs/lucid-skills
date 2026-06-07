@@ -46,9 +46,9 @@ file** (you get a path, not JSON). So:
   shared CLI against the file:
 
   ```bash
-  python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals  pl.json
-  python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py rows    pl.json --section summary --nonzero
-  python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py rows    pl.json --section note --nonzero   # one note at a time
+  python ${CLAUDE_PLUGIN_ROOT}/skills/pl-and-margin-analysis/scripts/lucid_utils.py totals  pl.json
+  python ${CLAUDE_PLUGIN_ROOT}/skills/pl-and-margin-analysis/scripts/lucid_utils.py rows    pl.json --section summary --nonzero
+  python ${CLAUDE_PLUGIN_ROOT}/skills/pl-and-margin-analysis/scripts/lucid_utils.py rows    pl.json --section note --nonzero   # one note at a time
   ```
 
 **3. Sign convention.** Revenue and expenses are **both positive**; subtotals are

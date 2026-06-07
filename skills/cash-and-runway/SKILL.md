@@ -151,9 +151,26 @@ validation pull. When a result spills to a file, **don't read the raw JSON
 back** — use the shared CLI:
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals <cf.json>
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py rows <cf.json> --section operating --nonzero
+python ${CLAUDE_PLUGIN_ROOT}/skills/cash-and-runway/scripts/lucid_utils.py totals <cf.json>
+python ${CLAUDE_PLUGIN_ROOT}/skills/cash-and-runway/scripts/lucid_utils.py rows <cf.json> --section operating --nonzero
 ```
+
+### Monthly operating / investing / financing breakdown
+
+`tieout.per_month` only gives the **net** cash change per month (classified vs
+bank delta) — *not* the operating/investing/financing split. To get each month's
+split, request the months explicitly and read the aligned per-row `series`:
+
+```text
+get_cash_flow_direct(company="ACME", period="2025-12",
+                     periods="2025-01,2025-02, … ,2025-12", view="lucid")
+```
+
+Each row then carries a `series` aligned to your `periods` order. Read the
+**net-section rows** for the monthly splits — operating (row 21), investing
+(row 31), financing (row 39), and total change (row 41) — confirming row
+numbers/labels against the response (they're configured per company). One
+`periods=` call beats twelve single-month calls.
 
 Then run the burn/runway/driver math:
 

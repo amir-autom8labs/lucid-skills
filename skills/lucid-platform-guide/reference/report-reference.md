@@ -228,6 +228,13 @@ sum_matches_cell: bool                   # the reconciliation guarantee
 the clicked cell; **`sum_matches_cell` must be `true`**. Paginate with the cursors
 (`limit` 1–200). `view` controls whether AJE lines are included (`lucid` = both).
 
+**Only drill detail, non-zero cells.** `drilldown` returns nothing for aggregator
+rows (`is_subtotal: true` — subtotals / net-sections / grand-totals — plus
+headers, balance anchors, and check rows; `sum_matches_cell` comes back false) and
+for `0`/`null` cells (no lines). Screen them out first — to understand a subtotal
+use `explain` (it shows the children), not `drilldown`. The `lucid:explain-and-audit`
+skill and `lucid_utils.py drillable` automate this screening.
+
 ---
 
 ## Sign conventions
