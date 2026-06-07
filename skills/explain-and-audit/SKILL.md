@@ -49,6 +49,39 @@ two reports with multiple columns need it set explicitly:
 - **BVA:** `actual` \| `budget` \| `variance` (you can explain a *variance* — it
   derives the actual and budget legs)
 
+## Screen cells before you drill — don't waste calls
+
+`drilldown` fetches the journal lines under a **leaf cell**, so it only makes
+sense on a **detail row with a non-zero value**. Two kinds of cells return
+*nothing* and must be skipped — drilling them is the classic wasted-call mistake
+(a screen full of "Cell value $0" and "subtotal — doesn't drill"):
+
+- **Aggregator rows** — any `is_subtotal: true` row (subtotals, net-section,
+  grand-total) plus headers, balance anchors (opening/closing cash), and check
+  rows. They sum *other* rows, so they have no lines of their own and
+  `sum_matches_cell` comes back **false**. To understand a subtotal, read its
+  child detail rows or call **`explain`** (which gives the formula + children) —
+  never `drilldown`.
+- **Zero / no-data cells** — `amount` of `0` or `null`. There are no lines to
+  fetch.
+
+So before drilling a batch of cells, **filter to the ones that actually have
+transactions, ranked by materiality**, and drill those. If you can run code, the
+helper does exactly this:
+
+```bash
+# the cells worth drilling in a section — detail, non-zero, largest first
+python ${CLAUDE_PLUGIN_ROOT}/skills/explain-and-audit/scripts/lucid_utils.py \
+    drillable cf.json --section investing --top 10
+```
+
+If you can't run code, apply the same rule by eye on the report's `rows[]`: skip
+any row with `is_subtotal: true` (or a `row_type` of header / net_section /
+grand_total / opening_cash / closing_cash / check) and any row whose value is `0`
+or `null`; drill what's left, biggest first. A whole section of zeros means
+"nothing happened here" — say that in one line; don't drill seven empty cells to
+prove it.
+
 **Get the row_num from the report response, don't guess it** — each report's
 `rows[]` carry both `row_num` and `label`, so match on the label the user is
 asking about. Row numbers are stable across periods for a given company/template
@@ -152,17 +185,22 @@ silently translate or drop the source string; it's the auditable reference.
 
 ## The workflow
 
-1. **Identify the cell** — report, period, row_num (from the maps), column.
+1. **Identify the cell(s)** — report, period, row_num (from the maps), column.
    Resolve the company handle first (`search_entities`) if you don't have it.
-2. **`explain`** — get the story: formula, classifications, contributing
-   accounts, controller adjustments.
-3. **`drilldown`** — get the receipts: the JE and AJE lines; page if cursors are
-   non-null.
-4. **State the reconciliation** — `sum_matches_cell` (and, if relevant, the host
+2. **Screen first if there are several cells** — keep only detail, non-zero rows
+   (see *Screen cells before you drill*); never drill subtotals or zero cells.
+3. **`explain`** — get the story: formula, classifications, contributing
+   accounts, controller adjustments. (For a *subtotal*, this is the right tool —
+   it shows the children — whereas `drilldown` would return nothing.)
+4. **`drilldown`** — get the receipts for a real detail cell: the JE and AJE
+   lines; page if cursors are non-null.
+5. **State the reconciliation** — `sum_matches_cell` (and, if relevant, the host
    report's own tie-out from the platform guide). Only then present the number.
 
 Keep it to a few calls. `explain` + one `drilldown` answers most questions; add
-pages only when the user wants every line. See `reference/audit-checklist.md` for
+pages only when the user wants every line. **Spend calls on cells that have
+transactions — screening first is what keeps a "trace everything" request from
+turning into dozens of empty drilldowns.** See `reference/audit-checklist.md` for
 the exact checks to run before you call a number trustworthy.
 
 ## Output structure

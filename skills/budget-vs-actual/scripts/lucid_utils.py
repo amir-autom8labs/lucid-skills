@@ -210,6 +210,83 @@ def find_row(report: dict, row_num: int, column: str = "amount") -> Decimal | No
     return None
 
 
+# Row types that aggregate other rows or carry no journal lines of their own,
+# so `drilldown` on them is wasted (it returns nothing and `sum_matches_cell`
+# is false). `is_subtotal` already covers subtotal/net_section/grand_total; the
+# rest are headers, balance anchors, and formula/reference rows.
+_NON_DRILLABLE_ROW_TYPES: frozenset[str] = frozenset(
+    {
+        "header",
+        "subtotal",
+        "net_section",
+        "grand_total",
+        "opening_cash",
+        "closing_cash",
+        "check",
+        "other_formula",
+        "unclassified",
+    }
+)
+
+
+def is_drillable(row: dict, column: str = "amount") -> bool:
+    """Is this report row worth a ``drilldown`` call?
+
+    ``drilldown`` fetches the journal lines under a **leaf cell**. It is wasted on
+    two kinds of rows — exactly the ones that produced the screen full of empty
+    results:
+
+    * **Aggregators** — subtotal / net-section / grand-total / header / check /
+      balance-anchor rows. They sum *other* rows, so they have no lines of their
+      own (``sum_matches_cell`` comes back false). To understand one, read its
+      child detail rows or call ``explain`` (which shows the formula + children),
+      not ``drilldown``.
+    * **Zero / no-data cells** — there are no lines to fetch, so the call returns
+      an empty sample.
+
+    Screen with this before drilling so you only spend calls on cells that
+    actually have transactions behind them.
+    """
+    if row.get("is_subtotal"):
+        return False
+    if row.get("row_type") in _NON_DRILLABLE_ROW_TYPES:
+        return False
+    value = _row_amount(row, column)
+    return value is not None and value != 0
+
+
+def drillable_rows(
+    report: dict,
+    *,
+    column: str = "amount",
+    section: str | None = None,
+    top: int | None = None,
+) -> list[dict[str, Any]]:
+    """The detail rows worth drilling, **largest absolute value first**.
+
+    This is the list to iterate when you must trace several cells: it drops the
+    aggregators and the zero/no-data cells (see :func:`is_drillable`) and ranks
+    what remains by materiality, so you drill the cells that move the number and
+    skip the noise. Cap with ``top`` to stay to the material few.
+    """
+    out: list[dict[str, Any]] = []
+    for row in report.get("rows", []):
+        if section is not None and row.get("section") != section:
+            continue
+        if not is_drillable(row, column):
+            continue
+        out.append(
+            {
+                "row": row.get("row_num"),
+                "label": row.get("label"),
+                "section": row.get("section"),
+                "value": _row_amount(row, column),
+            }
+        )
+    out.sort(key=lambda r: abs(r["value"]), reverse=True)
+    return out[:top] if top else out
+
+
 # --------------------------------------------------------------------------- #
 # Report-specific views
 # --------------------------------------------------------------------------- #
@@ -323,6 +400,14 @@ def main(argv: list[str] | None = None) -> int:
     p_bva.add_argument("file")
     p_bva.add_argument("--top", type=int)
 
+    p_drill = sub.add_parser(
+        "drillable", help="rows worth a drilldown (detail + non-zero), by |value|"
+    )
+    p_drill.add_argument("file")
+    p_drill.add_argument("--section")
+    p_drill.add_argument("--column", default="amount")
+    p_drill.add_argument("--top", type=int)
+
     args = parser.parse_args(argv)
     report = load_json(args.file)
 
@@ -348,6 +433,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "kpis":
         for k in kpi_view(report):
             print(f"  {k['label']:>14}: {k['value']:>16}   ({k['comparator']})")
+    elif args.cmd == "drillable":
+        rows = drillable_rows(
+            report, column=args.column, section=args.section, top=args.top
+        )
+        if not rows:
+            print("  (no drillable cells — all aggregators or zero/no-data)")
+        for r in rows:
+            print(f"  [{r['row']:>4}] {fmt(r['value']):>16}  {r['label']}")
     elif args.cmd == "bva":
         for r in variance_table(report, top=args.top):
             vp = r["variance_pct"]
