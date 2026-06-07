@@ -111,12 +111,12 @@ spill to a file — that's expected.
 extract compact tables, especially from spilled files:
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py kpis   dashboard.json
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals pl.json
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py rows   pl.json --section summary --nonzero
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals bs.json
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals cf.json
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py bva    bva.json --top 10
+python ${CLAUDE_PLUGIN_ROOT}/skills/board-pack/scripts/lucid_utils.py kpis   dashboard.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/board-pack/scripts/lucid_utils.py totals pl.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/board-pack/scripts/lucid_utils.py rows   pl.json --section summary --nonzero
+python ${CLAUDE_PLUGIN_ROOT}/skills/board-pack/scripts/lucid_utils.py totals bs.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/board-pack/scripts/lucid_utils.py totals cf.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/board-pack/scripts/lucid_utils.py bva    bva.json --top 10
 ```
 
 To produce the export-ready dataset in one shot, run the bundled assembler,

@@ -93,7 +93,7 @@ unit actually carries a **major-units** money envelope — **never divide by
 100**):
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py kpis dashboard.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/financial-position-review/scripts/lucid_utils.py kpis dashboard.json
 ```
 
 For Acme Inc. / Mar 2025 this frames the month:
@@ -127,9 +127,9 @@ get_cash_flow_direct(company="ACME", period="2025-03", view="lucid") → cf.json
 Pull just the totals + tie-out from each spilled file:
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals pl.json
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals bs.json
-python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals cf.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/financial-position-review/scripts/lucid_utils.py totals pl.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/financial-position-review/scripts/lucid_utils.py totals bs.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/financial-position-review/scripts/lucid_utils.py totals cf.json
 ```
 
 Validated figures for Acme Inc. (synthetic):

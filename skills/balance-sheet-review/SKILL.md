@@ -157,7 +157,7 @@ deficit (`displayed_equity < 0`) distinctly from accumulated losses.
    `lucid_utils` CLI on the path:
    ```bash
    python ${CLAUDE_PLUGIN_ROOT}/skills/balance-sheet-review/scripts/bs_review.py <bs.json>
-   python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals <bs.json>
+   python ${CLAUDE_PLUGIN_ROOT}/skills/balance-sheet-review/scripts/lucid_utils.py totals <bs.json>
    ```
 5. **Check the tie-out, then present** in the output structure below.
 

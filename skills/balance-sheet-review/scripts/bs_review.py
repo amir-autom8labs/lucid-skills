@@ -38,6 +38,10 @@ for _c in _CANDIDATES:
         sys.path.insert(0, _c)
         break
 
+# Self-contained: this skill bundles lucid_utils.py beside this script. Prepend
+# this script's own dir so the import resolves in any runtime (incl. claude.ai),
+# whether or not CLAUDE_PLUGIN_ROOT is set.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lucid_utils import fmt, find_row, load_json, tieout_status, to_decimal  # noqa: E402
 
 # Stable balance-sheet template rows (see reference/report-reference.md).

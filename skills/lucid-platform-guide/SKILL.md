@@ -90,19 +90,34 @@ materially between views, so state which one you used.
 - `lucid` — the adjusted, close-ready numbers. **This is the default and what a
   CFO usually wants.** Use `base` vs `lucid` to show the impact of adjustments.
 
-## The money envelope — never divide by 100
+## The money envelope — read it as dollars, never divide by 100
 
-Every monetary field arrives already formatted in **major units** (dollars):
+Every monetary field you receive is already shaped into **major units** (dollars):
 
 ```json
 {"amount": "1234567.89", "currency": "USD", "units": "major"}
 ```
 
-`amount` is an exact decimal **string**. Read it as dollars as-is. Do **not**
-multiply or divide by 100 — that's a frequent and embarrassing error. Some fields
-are plain numbers instead (counts; the dashboard's `months` and `bps` units;
-ratios) and some are `null` (genuine "no data" — not zero). The shared helper
-(below) handles all of these; prefer it over hand-parsing.
+`amount` is an exact decimal **string** — read it as dollars as-is.
+
+> **Reconciling a doc conflict you will notice.** The individual MCP *tool
+> descriptions* say "Amounts are integer USD cents." That describes Lucid's
+> internal backend wire. The MCP server runs a shaping layer that converts every
+> cents field into the `{amount, currency, units}` envelope **before it reaches
+> you** — so what you actually receive is major-unit dollars, not cents. **Trust
+> the value you get and its `units` field, not the tool-description prose.** Rule
+> of thumb: a money field that is an object with `"units": "major"` is dollars
+> (use as-is); only on the rare chance you ever get a *bare integer* for a money
+> field should you treat it as cents (÷100).
+
+Not everything is a money envelope:
+- **Counts / ids / ratios** are plain numbers (`variance_pct`, row counts, …).
+- **`null`** means genuine "no data" — not zero. Keep the two distinct.
+- **Dashboard KPIs are special.** Each KPI carries a sibling `unit` label. When
+  `unit == "cents"` the `amount` is a money envelope (dollars). When `unit` is
+  `"months"` or `"bps"` the `amount` is a **bare integer** — months as-is, bps as
+  basis-points×100 (`-2000` = −20.00%, ÷100 for percent). The `delta` fields are
+  tagged the same way via `delta_unit`. Never read a `bps`/`months` value as dollars.
 
 ## Comparisons (multi-period)
 
@@ -146,39 +161,49 @@ suspect — that's a books problem worth surfacing, not something to paper over.
 
 ## Payload size — reports are big, retrieve compactly
 
-A full P&L is ~170 rows; with `compare` it can exceed the tool-result limit and
-the harness **spills it to a file**, returning a path instead of the JSON. This is
-normal. To stay efficient:
+A full P&L is ~170 rows; with `compare` it can be large. How an oversized result
+is handled is runtime-specific (Claude Code may **spill it to a file** and return
+a path; other runtimes truncate or summarize). Either way, stay compact:
 
 - Ask for **one period** and only what you need. Avoid `compare` /
   `include_trend` / `include_composition` unless the question demands them.
-- The reports carry both detail and subtotal rows; the **headline figures live in
-  `totals`** and in the subtotal rows — you rarely need every leaf line.
-- When a result spills to a file, **don't read the raw JSON back into context.**
-  Use the shared helper or `jq` to pull just what you need:
+- The **headline figures live in `totals`** (stable keys) and in the subtotal
+  rows — you rarely need every leaf line. Read `totals` first.
+- In a code-execution runtime, **don't read a huge raw JSON back into context** —
+  extract just what you need with the helper or `jq`:
 
   ```bash
-  python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py totals <spfilled.json>
-  python ${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py rows <spilled.json> --section summary --nonzero
-  jq '.totals' <spilled.json>
+  python <skill>/scripts/lucid_utils.py totals report.json
+  python <skill>/scripts/lucid_utils.py rows   report.json --section summary --nonzero
+  jq '.totals' report.json
   ```
 
-## The shared helper
+## The helper is optional — parse inline when you can't run code
 
-`${CLAUDE_PLUGIN_ROOT}/scripts/lucid_utils.py` is the one place money parsing,
-ratios, and table-shaping live, so numbers never disagree between skills. Import
-it in analysis scripts:
+Each analysis skill **bundles `scripts/lucid_utils.py` in its own directory** so
+it's self-contained: one tested place for money parsing, ratios, and table
+shaping, so numbers never disagree between skills. In a code-execution runtime
+(Claude Code, cowork) run it from the skill's own folder
+(`${CLAUDE_PLUGIN_ROOT}/skills/<skill-name>/scripts/lucid_utils.py`) or import it
+(the bundled scripts add their own directory to `sys.path`, so
+`from lucid_utils import …` resolves to the sibling copy). Key functions:
+`to_decimal`, `fmt`, `report_rows`, `find_row`, `pct`, `kpi_view`,
+`variance_table`, `tieout_status`, `growth`, `runway_months`; CLI subcommands
+`rows` / `totals` / `kpis` / `bva`.
 
-```python
-import sys; sys.path.insert(0, f"{PLUGIN_ROOT}/scripts")
-from lucid_utils import to_decimal, fmt, report_rows, find_row, pct, \
-    variance_table, kpi_view, tieout_status, growth, runway_months
-```
+**But the helper is an optimization, not a requirement.** If you have no code tool
+(e.g. on claude.ai in a pure-reasoning chat), just read the JSON directly — it's
+simple:
 
-Key functions: `to_decimal(field)` (envelope/number/null → `Decimal|None`),
-`fmt(value)` ($-formatted), `report_rows(report, section=…, nonzero=…)`,
-`find_row(report, row_num)`, `pct(a, b)`, `kpi_view(dashboard)` (unit-aware),
-`variance_table(bva)`, `tieout_status(report)`. Or run it as a CLI (see above).
+- **Money field** → take `.amount` and read it as a dollar decimal.
+- **Headline figures** → the stable `totals.*` keys, e.g.
+  `totals.net_profit.amount`, `totals.total_assets.amount`.
+- **Dashboard KPI** → branch on `.unit`: `cents` → `.amount.amount` (dollars),
+  `months` → `.amount` (integer), `bps` → `.amount` ÷ 100 (percent).
+- **Tie-out** → compare the report's `*_check_delta` / `tieout.period_delta` to
+  `0`, or `tie_out_ok` to `true`.
+
+Never re-scale by 100 — values are already dollars.
 
 ## Report row maps & exact response shapes
 

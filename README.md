@@ -22,9 +22,18 @@ only ever sees the companies and periods you are granted.
 | `lucid:explain-and-audit` | Trace any number to its source: `explain` (derivation) and `drilldown` (journal lines), plus reconciliation checks. |
 | `lucid:board-pack` | Assemble a board-ready narrative and export it to xlsx / pdf, pulling coherently across every report. |
 
-A shared Python helper (`scripts/lucid_utils.py`) parses Lucid's money envelope,
-reads large spilled tool results, and builds common-size / variance / ratio tables
-so every analysis skill computes numbers the same, correct way.
+A Python helper (`scripts/lucid_utils.py`) parses Lucid's money envelope, reads
+large tool results, and builds common-size / variance / ratio tables so every
+analysis skill computes numbers the same, correct way. `scripts/lucid_utils.py`
+is the canonical source; each skill **bundles its own copy** under
+`skills/<name>/scripts/lucid_utils.py` so it stays self-contained and works in any
+runtime (Claude Code, cowork, or claude.ai, where only the skill's own files are
+loaded). The helper is an **optimization** — when no code interpreter is
+available, the skills parse the report JSON inline (the values are already
+dollars; see `lucid-platform-guide`).
+
+> Maintainers: `scripts/lucid_utils.py` is the source of truth. After editing it,
+> re-sync the per-skill copies (e.g. `for d in skills/*/scripts; do [ -f "$d/lucid_utils.py" ] && cp scripts/lucid_utils.py "$d/"; done`).
 
 ## Install
 
