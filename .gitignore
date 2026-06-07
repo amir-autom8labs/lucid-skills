@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+.ty_cache/
+.venv/

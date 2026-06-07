@@ -1,0 +1,5 @@
+# The per-skill analysis scripts import the shared helper `lucid_utils`, which
+# lives in `scripts/` and is added to sys.path at runtime via CLAUDE_PLUGIN_ROOT.
+# Tell ty where to find it so static type-checking resolves the import.
+[environment]
+extra-paths = ["scripts"]
