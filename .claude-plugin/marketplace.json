@@ -9,6 +9,7 @@
   "plugins": [
     {
       "name": "lucid",
+      "version": "0.3.0",
       "source": "./",
       "description": "CFO-grade analysis on top of the Lucid financial-data platform: close review, P&L/margins, cash & runway, budget-vs-actual, balance sheet, drill-down/audit, and board packs."
     }
