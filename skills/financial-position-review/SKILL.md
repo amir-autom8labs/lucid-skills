@@ -10,7 +10,7 @@ description: >-
   rather than one statement — phrasings like "how are we doing", "monthly
   review", "close review", "financial health", "give me the state of the
   business", "where do we stand", "month-end summary", or "snapshot of
-  <company> for <month>". When the ask is scoped to one statement (just P&L,
+  {company} for {month}". When the ask is scoped to one statement (just P&L,
   just cash, just budget), prefer the focused skill instead. Reads from the
   read-only Lucid MCP connector; builds on lucid:lucid-platform-guide.
 ---
