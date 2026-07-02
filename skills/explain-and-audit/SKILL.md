@@ -6,7 +6,7 @@ description: >-
   real journal lines under a cell, split JE/AJE). Use this WHENEVER someone
   questions or wants to verify a figure from a Lucid report: "why is X this
   number", "explain this figure", "where does this come from", "what makes up
-  <line>", "break down <number>", "show me the journal entries / transactions
+  {line}", "break down {number}", "show me the journal entries / transactions
   behind this", "drill down", "audit this", "reconcile", "tie this out", "is
   this right / prove it to me". This is the why-is-this-number-what-it-is and
   show-me-the-receipts skill. It builds on the mechanics in

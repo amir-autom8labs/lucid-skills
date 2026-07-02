@@ -8,7 +8,7 @@ description: >-
   slide deck). Use this WHENEVER someone wants to "build a board pack", "board
   deck", "board report" or "monthly board report", an "investor update", a "CFO
   report", to "prepare/package the financials for the board", or to "export the
-  financials" / "build a financial package for <month or quarter>". This skill
+  financials" / "build a financial package for {month or quarter}". This skill
   ORCHESTRATES the other Lucid skills: it pulls every statement for ONE company +
   period + view in a single coherent pass, cross-checks that the figures agree
   across statements, reconciles, and only then hands a clean tabular dataset to
