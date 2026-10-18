@@ -10,7 +10,8 @@
 
 ## 1. Executive summary
 
-- **Cash & runway:** {{CASH}} on hand; ~{{RUNWAY}} of runway at current burn.
+- **Cash & burn:** {{CASH}} on hand; monthly operating burn {{MONTHLY_BURN}};
+  runway {{RUNWAY}} (quoted from the KPI card — never divided out here).
 - **Revenue:** {{REVENUE}} ({{REVENUE_COMPARATOR}}).
 - **Gross margin:** {{GROSS_MARGIN_PCT}}.
 - **Net result:** {{NET_PROFIT}} for the period.
@@ -20,12 +21,20 @@
 
 ## 2. KPI scorecard
 
-| KPI | Value | vs prior |
-|---|---|---|
-| Cash | {{CASH}} | {{CASH_DELTA}} |
-| Runway | {{RUNWAY}} | {{RUNWAY_COMPARATOR}} |
-| Revenue (QTD) | {{REVENUE}} | {{REVENUE_DELTA}} |
-| Gross margin | {{GROSS_MARGIN_PCT}} | {{GM_DELTA}} |
+> Filled from `get_status(company, period=…, sections=["kpis"])` — the
+> backend-computed strip. Every figure is **quoted**, never
+> re-derived off the statements below: a scorecard that disagrees with its own
+> pack by a rounding step is worse than no scorecard. `runway` is a count of
+> months and `gross_margin` basis points; a card whose amount is `null` is
+> written as its `comparator`'s reason, and a `provisional` month is labelled
+> not-yet-closed.
+>
+> | KPI | Value | vs prior |
+> |---|---|---|
+> | Cash | {{CASH}} | {{CASH_DELTA}} |
+> | Runway | {{RUNWAY}} | {{RUNWAY_COMPARATOR}} |
+> | Revenue (QTD) | {{REVENUE}} | {{REVENUE_DELTA}} |
+> | Gross margin | {{GROSS_MARGIN_PCT}} | {{GM_DELTA}} |
 
 ---
 
@@ -59,7 +68,7 @@ Tie-out: `balance_check_delta` = {{BS_CHECK}} — {{BS_TIEOUT}}
 
 ---
 
-## 5. Cash flow & runway — {{PERIOD_LABEL}}
+## 5. Cash flow — {{PERIOD_LABEL}}
 
 | Section | Amount |
 |---|---|
@@ -70,25 +79,31 @@ Tie-out: `balance_check_delta` = {{BS_CHECK}} — {{BS_TIEOUT}}
 | Cash at beginning of period | {{CF_OPENING}} |
 | Cash at end of period | {{CF_CLOSING}} |
 
-Monthly burn: {{MONTHLY_BURN}}  |  Runway: {{RUNWAY}}
+Monthly burn: {{MONTHLY_BURN}}  |  Runway: {{RUNWAY}} (KPI card, quoted)
 Tie-out: cash flow `period_delta` = {{CF_CHECK}} — {{CF_TIEOUT}}
 
 ---
 
 ## 6. Budget vs actual — material variances
 
-| Line | Actual | Budget | Variance | % |
-|---|---|---|---|---|
-{{BVA_ROWS}}
-
-Tie-out: BVA `check_delta` = {{BVA_CHECK}} — {{BVA_TIEOUT}}
+> **Temporarily unavailable.** `get_bva` returns a "budget-vs-actual is not
+> available yet" stub — omit this exhibit with this note rather than presenting
+> variance numbers. The scaffold below is retained for when it is re-enabled.
+>
+> | Line | Actual | Budget | Variance | % |
+> |---|---|---|---|---|
+> {{BVA_ROWS}}
+>
+> Tie-out: BVA `check_delta` = {{BVA_CHECK}} — {{BVA_TIEOUT}}
 
 ---
 
 ## 7. Risks & flags
 
 - **Cross-statement reconciliation:** {{RECONCILIATION_STATUS}}
-  - Cash: dashboard {{CASH}} == BS row 5 {{BS_CASH}} == CF closing {{CF_CLOSING}} — {{CASH_RECON}}
+  - Cash: BS `totals.cash` {{BS_CASH}} == CF closing {{CF_CLOSING}} — {{CASH_RECON}}
+    {{BS_CASH_RECONCILIATION}}
+    {{BS_CASH_DISCLOSURES}}
   - Net result: P&L net {{NET_PROFIT}} vs BS current-year P&L {{BS_CURRENT_YEAR_PL}} — {{NET_RECON}}
 - **Tie-outs:** {{TIEOUT_SUMMARY}}
 - **Other flags:** {{OTHER_FLAGS}}

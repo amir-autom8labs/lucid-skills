@@ -1,18 +1,19 @@
 ---
 name: explain-and-audit
 description: >-
-  Trace any reported financial number to its source and prove it, using the
-  Lucid MCP connector's explain (7-part cell derivation) and drilldown (the
-  real journal lines under a cell, split JE/AJE). Use this WHENEVER someone
-  questions or wants to verify a figure from a Lucid report: "why is X this
-  number", "explain this figure", "where does this come from", "what makes up
-  {line}", "break down {number}", "show me the journal entries / transactions
-  behind this", "drill down", "audit this", "reconcile", "tie this out", "is
-  this right / prove it to me". This is the why-is-this-number-what-it-is and
-  show-me-the-receipts skill. It builds on the mechanics in
-  lucid:lucid-platform-guide (entity resolution, periods, views, the money
-  envelope, tie-out checks) — defer to that for anything not specific to
-  explain/drilldown.
+  prove-figure intent: trace ONE reported financial number to its source and prove
+  it, using the Lucid connector's explain (7-part cell derivation) and drilldown (the
+  real journal lines under a cell, split JE/AJE). Use this WHENEVER someone questions
+  or wants to verify ONE figure from a Lucid report: "why is this number what it is",
+  "explain this figure", "where does this come from", "what makes up {line}", "break
+  down {number}", "show me the journal entries behind this", "drill INTO this number",
+  "audit this", "reconcile / tie this out", "is this right, prove it". The
+  why-is-this-number and show-me-the-receipts skill. Do NOT use it for the PRODUCT
+  how-to "how do I drill down / navigate the app" → call the `get_help` product-manual
+  tool instead; and do
+  NOT use it to analyze a statement's TREND or drivers ("why did margin DROP over
+  time", OpEx composition, revenue growth) → that is pl-and-margin-analysis and the
+  other statement skills. This proves ONE cell, not a whole statement.
 ---
 
 # Explain & audit a Lucid number
@@ -27,9 +28,9 @@ state plainly whether it **reconciles**. Two tools do this:
 - **`drilldown`** — the *receipts*: the real journal lines (ledger + adjustments),
   with a `sum_matches_cell` flag that is the audit guarantee.
 
-Read `lucid:lucid-platform-guide` first if you haven't — this skill assumes you
-already know how to resolve a company, pick a period/view, and read the money
-envelope. Everything here is read-only.
+This skill assumes the shared connector mechanics (resolve a company, pick a
+period/view, read the money envelope) from the tool docstrings and the system
+prompt. Everything here is read-only.
 
 ## Target a cell precisely
 
@@ -39,7 +40,7 @@ Both tools point at **one cell**, identified by four coordinates:
 |---|---|---|
 | `report` | `tb` \| `bs` \| `pl` \| `cf_direct` \| `bva` \| `dashboard` | from what the user is looking at |
 | `period` | `2025-03`, `FY2025`, `YTD@2025-03`, … | the report's primary period |
-| `row` | the template **row_num** (e.g. the Gross Margin P&L row) | read it from the report response (`rows[]` carry `row_num` + `label`); maps in `lucid:lucid-platform-guide` → `reference/report-reference.md` |
+| `row` | the template **row_num** (e.g. the Gross Margin P&L row) | read it from the report response (`rows[]` carry `row_num` + `label`); maps in `reference/report-reference.md` |
 | `column` | which money column on the row | see below |
 
 `column` defaults to `amount`, which is right for P&L / BS / CF / dashboard. The
@@ -71,8 +72,8 @@ helper does exactly this:
 
 ```bash
 # the cells worth drilling in a section — detail, non-zero, largest first
-python ${CLAUDE_PLUGIN_ROOT}/skills/explain-and-audit/scripts/lucid_utils.py \
-    drillable cf.json --section investing --top 10
+# (run by relative path from the skill dir)
+python scripts/lucid_utils.py drillable cf.json --section investing --top 10
 ```
 
 If you can't run code, apply the same rule by eye on the report's `rows[]`: skip
@@ -88,7 +89,7 @@ asking about. Row numbers are stable across periods for a given company/template
 (that's the point) but are **per-company**, so don't hardcode them. The
 most-asked cells: Revenues, COGS, Gross Margin, Total OpEx, Net Profit, EBITDA;
 BS TOTAL ASSETS and Cash; CF Net operating and Total change. (Full maps live in
-`lucid:lucid-platform-guide` → `reference/report-reference.md`.)
+`reference/report-reference.md`.)
 
 ## The two-layer model — the key to every "why"
 
@@ -99,15 +100,27 @@ to "why isn't this what I expected":
   system. These never change. (`source: "ledger"`, the `base`/`erp_only` view.)
 - **Controller Layer** — Lucid's own **adjusting journal entries (AJEs)** layered
   on at close: reclasses, deferrals, allocations. (`source: "aje"`, the `aje` view.)
+  Some are written by Lucid itself, not by a person: the vendor-in-debit accrual,
+  and **projected entries**.
+- **Projected entries** — in an **open** month, Lucid's estimate of a recurring
+  P&L entry (payroll, rent, a retainer) that has not been booked yet, learned
+  from the pattern of the last months. Removed whole once the booked lines of
+  the same account reach 80% of it. A closed month never holds an active one, but
+  its superseded and dismissed projections stay as history (outside every
+  figure, listed with their status). They are **not** AJEs and never mixed into
+  the AJE figures: they carry their own `projected` component.
 
-The `lucid` view = **both layers netted**. So:
+The `lucid` view = **both layers netted, plus projections in open months**
+(`include_projections=false` leaves the projections out). So:
 
 > A `lucid` number that surprises someone = the ledger figure **plus the
 > adjustments**. `explain`/`drilldown` show you *exactly which* adjustments, line
 > by line. That difference *is* the controller's work, and it's usually the story.
 
 When someone asks "why is this different from what the bookkeeping shows", the
-answer is: compare `base` to `lucid`, and the AJE lines are the difference.
+answer is: compare `base` to `lucid`, and the AJE lines **plus the projected
+lines** are the difference. Name the projected part separately: "$42k of the
+difference is October payroll that Lucid projected because it is not booked yet."
 
 ## explain — the narrative (7 parts)
 
@@ -120,7 +133,7 @@ derivation of the cell. The parts, and how to use each:
 | `formula` | `{expression, narrative}` | "It's computed as **Revenues − COGS**." |
 | `classifications` | `[{dimension, value}]`, dim ∈ `AW`\|`AX`\|`AY`\|`W`\|`BUDGET` | "It pulls every line classified **AW=Revenues** and **AW=COGS**." |
 | `accounts` | `[{account_no, account_name, amount}]` | the contributing GL accounts and each one's signed contribution |
-| `controller_entries` | the AJE overlay: `[{description, account_no, period, amount, rationale, state}]` | "Three approved AJEs adjusted it: …" (state is usually `approved`) |
+| `controller_entries` | the AJE overlay: `[{description, account_no, period, amount, rationale, state}]`; a projection has `source: "projection"` and a `derivation` (pattern, method, confidence, the condition that removes it) | "Three approved AJEs adjusted it: …" (state is usually `approved`); for a projection (the cell's projected amount is explain's `projected_total`, never summed here): "$42k is projected payroll — the median of the last three months, removed once the real payroll is booked" |
 | `journal_lines` | `[{account_no, account_name, period, net, source}]` | the per-account net, tagged `ledger` vs `aje` |
 | `period_anchor` | `{opening_date, closing_date, opening_amount, closing_amount}` | for snapshots: where it started and ended |
 | `version_trail` | `[{at, actor, event, description}]` | provenance: baseline classification, who touched it |
@@ -135,18 +148,23 @@ contributing **−$250,000** to Gross Margin).
 
 `drilldown(company, report, period, row, column="amount", view=…, limit=50,
 je_cursor=…, aje_cursor=…)` returns the **actual journal lines** under the cell,
-in **two parallel samples**:
+in **parallel samples**:
 
 - `je_lines` — Ledger Layer lines (`source: "ledger"`)
 - `aje_lines` — Controller-Layer adjusting lines (`source: "aje"`)
+- `projected_lines` — projected entries in an open month (`lucid` view with
+  projections included only)
 
 Each line: `entry_date`, `entry_reference`, `entry_description`, `account_no` /
 `account_name`, `counterparty`, `line_description`, `debit`, `credit`,
 `net` (= debit − credit), `cf_line_class`. Plus the roll-ups:
 
-- `je_total_sum` / `aje_total_sum`, `je_total_count` / `aje_total_count`
+- `je_total_sum` / `aje_total_sum` / `projected_total_sum`, and the matching
+  `*_total_count`
 - `accounts_involved`
-- `je_next_cursor` / `aje_next_cursor` — paginate each source **independently**
+- `je_next_cursor` / `aje_next_cursor` / `projected_next_cursor` — paginate each
+  source **independently** (pass back as `je_cursor` / `aje_cursor` /
+  `projected_cursor`)
 - **`sum_matches_cell`** — **the audit check** (below)
 
 **The two sources net together.** An AJE can offset a ledger line — that's the
@@ -158,8 +176,11 @@ alone would mislead; only JE **+** AJE is the true number.
 ### sum_matches_cell — never skip this
 
 ```
-je_total_sum + aje_total_sum  ==  cell_value      ⟺   sum_matches_cell: true
+je_total_sum + aje_total_sum + projected_total_sum  ==  cell_value      ⟺   sum_matches_cell: true
 ```
+
+When `projected_total_sum` is non-zero, the cell is partly an estimate: say how
+much of it is projected, and that it leaves once the real entry is booked.
 
 This is the reconciliation guarantee: the lines you're showing actually add up to
 the number being questioned. **If `sum_matches_cell` is `false`, say so loudly** —
@@ -185,8 +206,9 @@ silently translate or drop the source string; it's the auditable reference.
 
 ## The workflow
 
-1. **Identify the cell(s)** — report, period, row_num (from the maps), column.
-   Resolve the company handle first (`search_entities`) if you don't have it.
+1. **Identify the cell(s)** — report, period, row_num, column. Read the `row_num`
+   off the report's `rows[]` (a `density=summary` pull is enough to find it, and
+   cheap); resolve the company handle first (`search_entities`) if you don't have it.
 2. **Screen first if there are several cells** — keep only detail, non-zero rows
    (see *Screen cells before you drill*); never drill subtotals or zero cells.
 3. **`explain`** — get the story: formula, classifications, contributing
@@ -195,7 +217,7 @@ silently translate or drop the source string; it's the auditable reference.
 4. **`drilldown`** — get the receipts for a real detail cell: the JE and AJE
    lines; page if cursors are non-null.
 5. **State the reconciliation** — `sum_matches_cell` (and, if relevant, the host
-   report's own tie-out from the platform guide). Only then present the number.
+   report's own tie-out). Only then present the number.
 
 Keep it to a few calls. `explain` + one `drilldown` answers most questions; add
 pages only when the user wants every line. **Spend calls on cells that have
@@ -203,25 +225,34 @@ transactions — screening first is what keeps a "trace everything" request from
 turning into dozens of empty drilldowns.** See `reference/audit-checklist.md` for
 the exact checks to run before you call a number trustworthy.
 
-## Output structure
+## Answering — qualitative narrative + assembled evidence
 
-Report an explanation in this order — story first, receipts second, verdict last:
+Follow the answer contract, applied to a trace — story first,
+receipts second, verdict last.
 
-1. **The figure** — the cell, its label, and value. "Gross Margin (the Gross
-   Margin P&L row), Mar 2025, **lucid view: −$50,000**."
-2. **The formula / story** — `formula.expression` in plain words, and which
-   classifications feed it. "Revenues − COGS, over all AW=Revenues and AW=COGS
-   lines."
-3. **Contributing accounts & adjustments** — the material `accounts` (signed),
-   then the `controller_entries`: what each AJE did and why it moved the number.
-   "The ledger revenue was $100,000, but an approved AJE reclassed it out and a
-   deferred-income cut-off AJE netted part of it back."
-4. **Journal-line evidence** — the concrete JE / AJE lines from `drilldown`:
-   dates, references, accounts, net amounts (labels preserved verbatim). The
-   receipts.
-5. **Reconciliation verdict** — `sum_matches_cell: true/false`, the JE and AJE
-   totals, and whether the host report ties out. "JE +$100,000 and AJE −$70,000
-   net to the $30,000 cell — **reconciled (sum_matches_cell: true)**."
+**Your assistant message = the story and the verdict**, in this order:
+
+1. **The figure** — name the cell (label, report, period, view) and *that* it's
+   the number in question; don't re-type its value — the assembled block shows it.
+2. **The formula / story** — `formula.expression` in plain words and which
+   classifications feed it ("Revenues − COGS, over all AW=Revenues and AW=COGS
+   lines").
+3. **Contributing accounts & adjustments** — *which* accounts and *which*
+   controller AJEs moved the number, and why (the reclass, the deferred-income
+   cut-off), with their signed amounts quoted from the `explain` result.
+4. **Journal-line evidence** — characterize the receipts (one real invoice; two
+   adjusting lines that reclass it and recognize the deferred portion), preserving
+   any non-English label **verbatim**. Show the material dated lines (date,
+   account, description, amount) in a short table, quoted from `drilldown`.
+5. **Reconciliation verdict** — state `sum_matches_cell` plainly (reconciled / NOT
+   reconciled) and whether the host report ties out. This is the one place a
+   qualitative claim — "the lines add up to the cell" — *is* the whole point;
+   assert it clearly, and if `false`, lead with the warning.
+
+Close with **2–3 grounded follow-ups** (e.g. "Page the remaining adjusting
+lines?", "Compare this cell in the base view?"). Every amount in the accounts
+table and the line trace is copied from the `explain` / `drilldown` you ran on
+the target cell — picked by the exact `row_num` read from the report's `rows[]`.
 
 State which **view** you used (`lucid` unless told otherwise) — the number is
 meaningless without it.
@@ -233,7 +264,7 @@ meaningless without it.
 > The `row=` values below are placeholders: **always read the actual `row_num`
 > from the report response** (`rows[]` carry `row_num` + `label`) rather than
 > hardcoding — row numbers are per-company/per-template (see
-> `lucid:lucid-platform-guide` → `reference/report-reference.md`).
+> `reference/report-reference.md`).
 
 ### 1. "Why is Gross Margin negative?" — `explain(pl, 2025-03, Gross Margin row)`
 
@@ -278,6 +309,6 @@ quote it verbatim here.)
 
 - **`reference/audit-checklist.md`** — the concrete checks to run before you tell
   anyone a number is correct.
-- **Row maps & response shapes** — `lucid:lucid-platform-guide` →
-  `reference/report-reference.md`: which `row_num` is which line on every report,
+- **Row maps & response shapes** — `reference/report-reference.md`: which
+  `row_num` is which line on every report,
   and the exact JSON shape of the `explain` / `drilldown` payloads.

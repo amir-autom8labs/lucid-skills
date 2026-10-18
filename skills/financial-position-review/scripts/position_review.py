@@ -33,30 +33,36 @@ import os
 import sys
 from typing import Any
 
-# Resolve the shared helper whether invoked via ${CLAUDE_PLUGIN_ROOT} or in-tree.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-for _cand in (
-    os.environ.get("CLAUDE_PLUGIN_ROOT", ""),
-    os.path.join(_HERE, "..", "..", ".."),  # skills/<name>/scripts → plugin root
-):
-    _scripts = os.path.join(_cand, "scripts")
-    if _cand and os.path.isfile(os.path.join(_scripts, "lucid_utils.py")):
-        sys.path.insert(0, _scripts)
-        break
-
 # Self-contained: this skill bundles lucid_utils.py beside this script. Prepend
-# this script's own dir so the import resolves in any runtime (incl. claude.ai),
-# whether or not CLAUDE_PLUGIN_ROOT is set.
+# this script's own dir so `from lucid_utils import ...` resolves to the sibling
+# copy in any runtime (Claude Code, Managed Agents, claude.ai) — the whole skill
+# dir, scripts included, is uploaded together, so no absolute plugin path is needed.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lucid_utils import (  # noqa: E402
-    find_row,
+    Figure,
     fmt,
+    fmt_figure,
+    heading_figure,
     kpi_view,
     load_json,
     pct,
+    role_figure,
     tieout_status,
     to_decimal,
+    total_figure,
 )
+
+
+def _prefer_total(report: dict[str, Any], total_key: str, role: str) -> Figure:
+    """A headline figure from ``totals`` if it is there, else from the row's ``role``.
+
+    ``totals`` is the better source — computed once in the backend and rendered
+    verbatim here — but it is projected away by a ``fields=[...]`` request, so
+    the row's stable ``role`` is the fallback. Both are identities; neither is
+    a position.
+    """
+    figure = total_figure(report, total_key)
+    return figure if figure.resolved else role_figure(report, role)
 
 
 def _tieout_line(name: str, report: dict[str, Any] | None) -> tuple[str, bool | None]:
@@ -105,29 +111,43 @@ def review(
 
     if pl is not None:
         print("=== PROFITABILITY (P&L) ===")
-        rev = find_row(pl, 5)
-        gm = find_row(pl, 7)
-        oi = find_row(pl, 15)
-        ni = find_row(pl, 24)
-        eb = find_row(pl, 30)
-        gm_pct = pct(gm, rev)
-        print(f"  {'Revenue':>16}: {fmt(rev)}")
-        print(f"  {'Gross margin':>16}: {fmt(gm)}"
+        # Bound by identity, never by row_num: every P&L band is elastic, so
+        # rows 5/7/15/24/30 name these lines on the reference chart and
+        # something else on a company with a different number of expense
+        # functions.
+        # Revenue is a headline BUCKET, not a computed row: it carries a
+        # ``heading_key``, not a ``role``.
+        rev = total_figure(pl, "revenues")
+        if not rev.resolved:
+            rev = heading_figure(pl, "revenues")
+        gm = _prefer_total(pl, "gross_margin", "gross_margin")
+        oi = _prefer_total(pl, "operating_income", "operating_income")
+        ni = _prefer_total(pl, "net_profit", "net_profit")
+        eb = _prefer_total(pl, "ebitda", "ebitda")
+        gm_pct = pct(gm.value, rev.value) if (gm.resolved and rev.resolved) else None
+        print(f"  {'Revenue':>16}: {fmt_figure(rev)}")
+        print(f"  {'Gross margin':>16}: {fmt_figure(gm)}"
               + (f"  ({gm_pct:.1f}%)" if gm_pct is not None else ""))
-        print(f"  {'Operating inc':>16}: {fmt(oi)}")
-        print(f"  {'EBITDA':>16}: {fmt(eb)}")
-        print(f"  {'Net profit':>16}: {fmt(ni)}")
+        print(f"  {'Operating inc':>16}: {fmt_figure(oi)}")
+        print(f"  {'EBITDA':>16}: {fmt_figure(eb)}")
+        print(f"  {'Net profit':>16}: {fmt_figure(ni)}")
         print()
 
     if bs is not None:
         print("=== POSITION (balance sheet) ===")
-        ta = find_row(bs, 24)
-        te = find_row(bs, 57)
-        # equity is carried negative; flip for human reading
-        te_h = -te if te is not None else None
-        print(f"  {'Total assets':>16}: {fmt(ta)}")
-        print(f"  {'Total equity':>16}: {fmt(te_h)}  (negative equity = deficit)"
-              if (te_h is not None and te_h < 0) else f"  {'Total equity':>16}: {fmt(te_h)}")
+        ta = _prefer_total(bs, "total_assets", "total_assets")
+        te = _prefer_total(bs, "total_equity", "total_equity")
+        # equity is carried negative; flip for human reading. An UNRESOLVED
+        # equity stays unresolved through the flip — negating "I don't know"
+        # must not produce a number.
+        te_h = Figure(
+            value=-te.value if te.value is not None else None,
+            unresolved_reason=te.unresolved_reason,
+        )
+        print(f"  {'Total assets':>16}: {fmt_figure(ta)}")
+        print(f"  {'Total equity':>16}: {fmt_figure(te_h)}  (negative equity = deficit)"
+              if (te_h.value is not None and te_h.value < 0)
+              else f"  {'Total equity':>16}: {fmt_figure(te_h)}")
         print()
 
     if cf is not None:

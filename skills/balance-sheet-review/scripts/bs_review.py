@@ -26,48 +26,97 @@ import os
 import sys
 from decimal import Decimal
 
-# Import the shared helper. ${CLAUDE_PLUGIN_ROOT}/scripts is the canonical home;
-# fall back to the repo layout (two dirs up from this script) when running locally.
-_PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT")
-_CANDIDATES = [
-    os.path.join(_PLUGIN_ROOT, "scripts") if _PLUGIN_ROOT else None,
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"),
-]
-for _c in _CANDIDATES:
-    if _c and os.path.isdir(_c):
-        sys.path.insert(0, _c)
-        break
-
 # Self-contained: this skill bundles lucid_utils.py beside this script. Prepend
-# this script's own dir so the import resolves in any runtime (incl. claude.ai),
-# whether or not CLAUDE_PLUGIN_ROOT is set.
+# this script's own dir so `from lucid_utils import ...` resolves to the sibling
+# copy in any runtime (Claude Code, Managed Agents, claude.ai) — the whole skill
+# dir, scripts included, is uploaded together, so no absolute plugin path is needed.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lucid_utils import fmt, find_row, load_json, tieout_status, to_decimal  # noqa: E402
+from lucid_utils import (  # noqa: E402
+    Figure,
+    bs_cash,
+    bs_cash_disclosures,
+    fmt,
+    fmt_cash_reconciliation,
+    fmt_figure,
+    load_json,
+    role_figure,
+    tieout_status,
+    total_figure,
+)
 
-# Stable balance-sheet template rows (see reference/report-reference.md).
-ROW_CASH = 5
-ROW_AR = 8
-ROW_OTHER_RECEIVABLE = 11
-ROW_TOTAL_CURRENT_ASSETS = 16
-ROW_TOTAL_ASSETS = 24
-ROW_AP = 29
-ROW_DEFERRED_INCOME = 32
-ROW_TOTAL_CURRENT_LIABILITIES = 35
-ROW_SAFE = 39
-ROW_TOTAL_LONG_TERM_LIABILITIES = 44
-ROW_SHARE_CAPITAL = 46
-ROW_APIC = 51
-ROW_CURRENT_YEAR_PL = 55
-ROW_RETAINED_EARNINGS = 56
-ROW_TOTAL_EQUITY = 57
-ROW_TOTAL_LIAB_AND_EQUITY = 59
+# Why there are no row numbers in this file any more
+# --------------------------------------------------
+# It used to open with sixteen pinned Balance-Sheet rows — ``ROW_CASH = 5``,
+# ``ROW_AR = 8``, ... — plus eight more for intercompany. Every one of them was
+# read off the one reference chart the canonical skeleton was traced from, and every one of them was correct there and nowhere else: a
+# generated chart's BS rows come out in the order that tenant's routing
+# produced them, so row 5 is whichever asset the routing happened to put first.
+# On a company whose current assets sort debtors-before-bank, this file stated
+# trade debtors as cash and computed a quick ratio from it — silently, because
+# prose output has no footing check to catch it.
+#
+# What replaces them splits in two, and the split is the honest finding of this
+# ticket rather than an implementation detail:
+#
+# * The **structural** rows — the totals and the scaffold — carry a stable
+#   ``role`` on the wire (or appear in the ``totals`` block, which is better
+#   still: computed once in the backend and rendered here verbatim). Those are
+#   resolved below and are fully position-free.
+#
+# * The **account-level leaves** — cash, AR, other receivable, AP, deferred
+#   income, SAFE, share capital, APIC, retained earnings, and the intercompany
+#   rows — have no identity on the wire at all. A BS detail row's label IS the
+#   routed ``main_class`` verbatim, so it is addressable, but only in the
+#   TENANT'S OWN vocabulary: nothing anywhere says which of a company's mains
+#   MEANS "accounts receivable". ``is_cash_pool`` works for cash precisely
+#   because it is a semantic flag someone sets in Settings; there is no
+#   equivalent for the rest.
+#
+# So this review now DECLINES those lines instead of reading them positionally.
+# Matching a label like "Accounts receivable" would be the same class of bug as
+# the pins — it would simply fail on a tenant who calls it "Trade debtors"
+# rather than on one whose rows shifted. Trading a silent failure for a
+# differently-silent failure is not a fix.
 
-# Intercompany rows — net these across entities for a group view.
-ROWS_INTERCOMPANY = [12, 13, 14, 21, 40, 41, 42, 43]
+# The shared reason every declined leaf reports. One string, because they all
+# fail for exactly one reason and a reader should recognise it as systemic
+# rather than as nine unrelated gaps.
+_NO_SEMANTIC_IDENTITY = (
+    "the wire carries no semantic identity for this line — a BS leaf is named "
+    "only by the tenant's own main_class vocabulary"
+)
+
+
+def _declined(line: str) -> Figure:
+    """A leaf this review cannot identify — reported as such, never as 0."""
+    return Figure(unresolved_reason=f"{line}: {_NO_SEMANTIC_IDENTITY}")
 
 
 def _abs(value: Decimal | None) -> Decimal | None:
     return None if value is None else abs(value)
+
+
+def _abs_figure(figure: Figure) -> Figure:
+    """Magnitude of a figure, carrying an unresolved state through unchanged.
+
+    Taking ``abs()`` of "I don't know" must not produce a number — the reason
+    rides along so the caller still renders "not identified".
+    """
+    return Figure(value=_abs(figure.value), unresolved_reason=figure.unresolved_reason)
+
+
+def _negate_figure(figure: Figure) -> Figure:
+    """Sign-flip a figure (wire → human), carrying an unresolved state through."""
+    return Figure(
+        value=None if figure.value is None else -figure.value,
+        unresolved_reason=figure.unresolved_reason,
+    )
+
+
+def _prefer_total(report: dict, total_key: str, role: str) -> Figure:
+    """A headline figure from ``totals`` if present, else from the row's ``role``."""
+    figure = total_figure(report, total_key)
+    return figure if figure.resolved else role_figure(report, role)
 
 
 def working_capital(
@@ -94,14 +143,12 @@ def current_ratio(
     return current_assets / denom
 
 
-def quick_ratio(
-    cash: Decimal | None, ar: Decimal | None, current_liabilities: Decimal | None
-) -> Decimal | None:
-    """(cash + AR) ÷ |current liabilities| — the acid test, excludes slower assets."""
-    denom = _abs(current_liabilities)
-    if cash is None or ar is None or denom is None or denom == 0:
-        return None
-    return (cash + ar) / denom
+# ``quick_ratio()`` was deleted with its last caller. The acid test needs the
+# cash and accounts-receivable LEAVES; cash now resolves via ``totals.cash`` but
+# AR has no identity on the wire, so the ratio is refused rather than computed
+# (see ``main``). A helper kept "for when AR resolves" would be dead code that
+# reads as a working feature, and ruff does not flag an unused module-level
+# function.
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,37 +158,45 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     bs = load_json(argv[0])
 
-    # --- Pull the headline template rows (signed, as on the wire) ----------- #
-    cash = find_row(bs, ROW_CASH)
-    ar = find_row(bs, ROW_AR)
-    other_recv = find_row(bs, ROW_OTHER_RECEIVABLE)
-    tca = find_row(bs, ROW_TOTAL_CURRENT_ASSETS)
-    total_assets = find_row(bs, ROW_TOTAL_ASSETS)
-    ap = find_row(bs, ROW_AP)
-    deferred = find_row(bs, ROW_DEFERRED_INCOME)
-    tcl = find_row(bs, ROW_TOTAL_CURRENT_LIABILITIES)
-    safe = find_row(bs, ROW_SAFE)
-    total_ltl = find_row(bs, ROW_TOTAL_LONG_TERM_LIABILITIES)
-    total_equity = find_row(bs, ROW_TOTAL_EQUITY)
+    # --- Structural rows: resolved by identity (signed, as on the wire) ---- #
+    # ``totals`` first where it carries the figure — computed once in the
+    # backend, rendered here verbatim — with the row's stable ``role`` as the
+    # fallback for a payload whose totals block was projected away.
+    tca = role_figure(bs, "total_current_assets")
+    tcl = role_figure(bs, "total_current_liabilities")
+    total_ltl = role_figure(bs, "total_long_term_liabilities")
 
-    totals = bs.get("totals", {})
-    t_assets = to_decimal(totals.get("total_assets")) or total_assets
-    t_liabilities = to_decimal(totals.get("total_liabilities"))
-    t_equity = to_decimal(totals.get("total_equity")) or total_equity
+    t_assets = _prefer_total(bs, "total_assets", "total_assets")
+    t_liabilities = _prefer_total(bs, "total_liabilities", "total_liabilities")
+    t_equity = _prefer_total(bs, "total_equity", "total_equity")
+    cy_pl = role_figure(bs, "pl_loss_profit")
+
+    # --- Account-level leaves: no identity on the wire, so declined -------- #
+    # Cash IS resolvable — the backend publishes it in ``totals.cash``: the
+    # balance of the is_cash_pool accounts, wherever the statement presents
+    # them. Every other leaf below still has no identity on the wire.
+    cash = bs_cash(bs)
+    ar = _declined("Accounts receivable")
+    other_recv = _declined("Other receivable")
+    ap = _declined("Accounts payable")
+    deferred = _declined("Deferred income")
+    safe = _declined("SAFE")
 
     # --- Derived liquidity metrics (sign-aware) ---------------------------- #
-    wc = working_capital(tca, tcl)
-    cr = current_ratio(tca, tcl)
-    qr = quick_ratio(cash, ar, tcl)
-
-    # --- Intercompany net (across entities) -------------------------------- #
-    ic_total = Decimal(0)
-    ic_found = False
-    for rn in ROWS_INTERCOMPANY:
-        v = find_row(bs, rn)
-        if v is not None:
-            ic_total += v
-            ic_found = True
+    wc = (
+        Figure(value=working_capital(tca.value, tcl.value))
+        if (tca.resolved and tcl.resolved)
+        else Figure(unresolved_reason="working capital needs both TCA and TCL")
+    )
+    cr = current_ratio(tca.value, tcl.value) if (tca.resolved and tcl.resolved) else None
+    # The quick ratio needs cash AND accounts receivable. Cash now resolves;
+    # AR still has no identity on the wire, so the ratio is NOT computed and
+    # NOT shown as "—". An acid test built from a guessed receivables line is a
+    # liquidity verdict on the wrong lines, and this ratio is one a reader acts
+    # on.
+    qr_declined = (
+        "accounts receivable: " + _NO_SEMANTIC_IDENTITY + " (cash resolves; AR does not)"
+    )
 
     tie = tieout_status(bs)
 
@@ -153,19 +208,26 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 60)
 
     print("\nASSETS (magnitudes)")
-    print(f"  {'Cash & equivalents':<32} {fmt(cash):>16}")
-    print(f"  {'Accounts receivable':<32} {fmt(ar):>16}")
-    print(f"  {'Other receivable':<32} {fmt(other_recv):>16}")
-    print(f"  {'Total current assets':<32} {fmt(tca):>16}")
-    print(f"  {'TOTAL ASSETS':<32} {fmt(t_assets):>16}")
+    print(f"  {'Cash & equivalents':<32} {fmt_figure(cash):>16}")
+    # Beside the figure: the amount of cash presented outside a cash class,
+    # then every backend clause — "includes" (that cash) and "excludes" (a
+    # cash class's accounts that are not cash, which carries no amount).
+    for line in fmt_cash_reconciliation(bs):
+        print(f"    ↳ {line}")
+    for disclosure in bs_cash_disclosures(bs):
+        print(f"    ↳ NOTE: {disclosure}")
+    print(f"  {'Accounts receivable':<32} {fmt_figure(ar):>16}")
+    print(f"  {'Other receivable':<32} {fmt_figure(other_recv):>16}")
+    print(f"  {'Total current assets':<32} {fmt_figure(tca):>16}")
+    print(f"  {'TOTAL ASSETS':<32} {fmt_figure(t_assets):>16}")
 
     print("\nLIABILITIES (magnitudes — sign flipped)")
-    print(f"  {'Accounts payable':<32} {fmt(_abs(ap)):>16}")
-    print(f"  {'Deferred income':<32} {fmt(_abs(deferred)):>16}")
-    print(f"  {'Total current liabilities':<32} {fmt(_abs(tcl)):>16}")
-    print(f"  {'SAFE':<32} {fmt(_abs(safe)):>16}")
-    print(f"  {'Total long-term liabilities':<32} {fmt(_abs(total_ltl)):>16}")
-    print(f"  {'TOTAL LIABILITIES':<32} {fmt(_abs(t_liabilities)):>16}")
+    print(f"  {'Accounts payable':<32} {fmt_figure(_abs_figure(ap)):>16}")
+    print(f"  {'Deferred income':<32} {fmt_figure(_abs_figure(deferred)):>16}")
+    print(f"  {'Total current liabilities':<32} {fmt_figure(_abs_figure(tcl)):>16}")
+    print(f"  {'SAFE':<32} {fmt_figure(_abs_figure(safe)):>16}")
+    print(f"  {'Total long-term liabilities':<32} {fmt_figure(_abs_figure(total_ltl)):>16}")
+    print(f"  {'TOTAL LIABILITIES':<32} {fmt_figure(_abs_figure(t_liabilities)):>16}")
 
     # Equity sign convention & the negative-book-equity flag.
     # On the wire, positive book equity is stored NEGATIVE; flip it for humans:
@@ -174,41 +236,43 @@ def main(argv: list[str] | None = None) -> int:
     # driver to inspect is retained earnings + current-year P&L (rows 56 + 55):
     # if those net to a loss large enough, book equity is negative even when the
     # headline total nets positive (e.g. SAFE parked in long-term liabilities).
-    share_capital = find_row(bs, ROW_SHARE_CAPITAL)
-    apic = find_row(bs, ROW_APIC)
-    cy_pl = find_row(bs, ROW_CURRENT_YEAR_PL)
-    retained = find_row(bs, ROW_RETAINED_EARNINGS)
-    displayed_equity = None if t_equity is None else -t_equity
-
-    # Accumulated position = retained earnings + current-year P&L, sign-flipped
-    # to a human magnitude (negative magnitude here = accumulated LOSS).
-    accumulated = None
-    if cy_pl is not None or retained is not None:
-        accumulated = -((cy_pl or Decimal(0)) + (retained or Decimal(0)))
+    displayed_equity = _negate_figure(t_equity)
 
     print("\nEQUITY (magnitudes — sign flipped)")
-    if share_capital is not None:
-        print(f"  {'Share capital + APIC':<32} "
-              f"{fmt(-((share_capital or Decimal(0)) + (apic or Decimal(0)))):>16}")
-    if accumulated is not None:
-        print(f"  {'Accumulated earnings/(losses)':<32} {fmt(accumulated):>16}")
+    # Share capital + APIC and the accumulated position are both DECLINED, and
+    # the accumulated one is worth spelling out: current-year P&L resolves
+    # cleanly (role ``pl_loss_profit``) but retained earnings does not, and
+    # ``retained + cy_pl`` computed from only the half that resolved is short
+    # by the whole opening position while still looking like a total. A partial
+    # sum presented as "accumulated earnings" is a wrong number, not a partial
+    # one.
+    share_capital_apic = _declined("Share capital + APIC")
+    accumulated = _declined("Accumulated earnings/(losses)")
+    print(f"  {'Share capital + APIC':<32} {fmt_figure(share_capital_apic):>16}")
+    print(f"  {'Accumulated earnings/(losses)':<32} {fmt_figure(accumulated):>16}")
+    print(f"  {'  of which current-year P&L':<32} "
+          f"{fmt_figure(_negate_figure(cy_pl)):>16}")
     eq_note = ""
-    if displayed_equity is not None and displayed_equity < 0:
+    if displayed_equity.value is not None and displayed_equity.value < 0:
         eq_note = "  ⚠ NEGATIVE book equity"
-    elif accumulated is not None and accumulated < 0:
-        eq_note = "  ⚠ accumulated losses"
-    print(f"  {'Total equity (book)':<32} {fmt(displayed_equity):>16}{eq_note}")
+    print(f"  {'Total equity (book)':<32} {fmt_figure(displayed_equity):>16}{eq_note}")
 
     print("\nLIQUIDITY")
-    print(f"  {'Working capital (TCA + TCL)':<32} {fmt(wc):>16}")
+    print(f"  {'Working capital (TCA + TCL)':<32} {fmt_figure(wc):>16}")
     print(f"  {'Current ratio (TCA / |TCL|)':<32} "
           f"{('—' if cr is None else f'{cr:.2f}x'):>16}")
-    print(f"  {'Quick ratio ((cash+AR)/|TCL|)':<32} "
-          f"{('—' if qr is None else f'{qr:.2f}x'):>16}")
+    print(f"  {'Quick ratio ((cash+AR)/|TCL|)':<32} {'not computed':>16}")
+    print(f"    ↳ {qr_declined}")
 
-    if ic_found:
-        print("\nINTERCOMPANY (net across entities; >0 = net receivable)")
-        print(f"  {'Net intercompany':<32} {fmt(ic_total):>16}")
+    print("\nINTERCOMPANY")
+    # Deliberately a refusal rather than a number. The intercompany rows were
+    # eight pinned positions netted across entities for a GROUP view, and
+    # consolidation is the one place a reader has no independent sense of what
+    # the figure should be — a wrong number here is undetectable by the person
+    # most likely to catch it anywhere else. Declining is the safe failure;
+    # netting eight guessed rows is not.
+    print(f"  {'Net intercompany':<32} {'not computed':>16}")
+    print(f"    ↳ {_NO_SEMANTIC_IDENTITY}")
 
     print("\nTIE-OUT")
     flag = {True: "OK", False: "OFF", None: "n/a"}[tie["ok"]]

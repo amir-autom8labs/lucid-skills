@@ -31,8 +31,8 @@ Examples (illustrative — fictional company Acme Inc., synthetic figures)::
     # rank cash drivers for one period
     python burn_runway.py drivers mar.json --top 8
 
-Stdlib only, plus ``lucid_utils`` discovered via ``CLAUDE_PLUGIN_ROOT`` (the
-plugin's ``scripts/`` dir) on ``sys.path``.
+Stdlib only, plus ``lucid_utils`` — the sibling module in this skill's
+``scripts/`` dir, added to ``sys.path`` below.
 """
 
 from __future__ import annotations
@@ -42,16 +42,10 @@ import os
 import sys
 from decimal import Decimal
 
-# Make the plugin's shared helper importable. CLAUDE_PLUGIN_ROOT is set when the
-# skill runs inside Claude Code; fall back to the repo layout for local runs.
-_PLUGIN_ROOT = os.environ.get(
-    "CLAUDE_PLUGIN_ROOT",
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
-)
-sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
 # Self-contained: this skill bundles lucid_utils.py beside this script. Prepend
-# this script's own dir LAST so it wins on sys.path — the import then resolves in
-# any runtime (incl. claude.ai), whether or not CLAUDE_PLUGIN_ROOT is set.
+# this script's own dir so `from lucid_utils import ...` resolves to the sibling
+# copy in any runtime (Claude Code, Managed Agents, claude.ai) — the whole skill
+# dir, scripts included, is uploaded together, so no absolute plugin path is needed.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lucid_utils import (  # noqa: E402  (import after sys.path tweak)
@@ -126,7 +120,13 @@ def cash_drivers(cf: dict, *, top: int | None = None) -> list[dict[str, object]]
             "row": r["row"],
             "label": r["label"],
             "value": r["value"],
-            "direction": "inflow" if (r["value"] or 0) > 0 else "outflow",
+            # `is not None`, not `or 0`: the `or` idiom treats a legitimate
+            # zero as absent. Harmless here today (callers filter zeros
+            # upstream) but it is the exact shape that made common_size read
+            # revenue off the wrong row, so it does not stay in the codebase.
+            "direction": (
+                "inflow" if (r["value"] is not None and r["value"] > 0) else "outflow"
+            ),
         }
         for r in rows
     ]

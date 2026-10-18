@@ -1,84 +1,89 @@
-# Lucid CFO plugin
+# Lucid plugin for Claude
 
-A Claude plugin that turns Claude into a **CFO-grade analyst** on top of the
-[Lucid](https://lucid.example) financial-data platform. It bundles the read-only
-**Lucid MCP connector** with a set of skills that teach Claude how to consume
-Lucid's data correctly and run the analyses a CFO actually asks for.
+Use **your own Claude** (Claude Code, Cowork or Claude.ai) as a CFO-grade analyst
+on your **Lucid** books. The plugin bundles the read-only Lucid connector with
+the same skills that power the Lucid assistant inside the app. You get the same
+analysis and the same rules for quoting figures, in your own Claude setup.
 
-Everything is **read-only**. The connector forwards your Auth0 access token to the
-Lucid backend, which enforces authorization and company-level row security — Claude
-only ever sees the companies and periods you are granted.
+Everything is **read-only**. You sign in with your Lucid account. Claude only
+sees the companies and periods you can see in Lucid, and it can never change
+anything.
 
-## What's inside
+## What you can ask
 
-| Skill | What it does |
+| Ask something like… | Skill that handles it |
 |---|---|
-| `lucid:lucid-platform-guide` | **Start here.** How to drive the Lucid MCP correctly — entities, period grammar, views, the money envelope, comparisons, tie-out discipline, payload-size handling, and report row maps. Every other skill builds on this. |
-| `lucid:financial-position-review` | Monthly close / "how are we doing" — a dashboard-led, cross-statement health check with tie-out verification. |
-| `lucid:pl-and-margin-analysis` | Income-statement deep dive: revenue, gross margin, OpEx burn, MoM/QoQ/YoY trends, common-size. |
-| `lucid:cash-and-runway` | Direct cash flow, burn, and runway; what's driving cash in/out; reconciliation to the bank delta. |
-| `lucid:budget-vs-actual` | Variance analysis: where you're off plan, by how much, and why — ranked by materiality. |
-| `lucid:balance-sheet-review` | Liquidity, working capital, AR/AP, intercompany, equity — with the sign convention handled correctly. |
-| `lucid:explain-and-audit` | Trace any number to its source: `explain` (derivation) and `drilldown` (journal lines), plus reconciliation checks. |
-| `lucid:board-pack` | Assemble a board-ready narrative and export it to xlsx / pdf, pulling coherently across every report. |
+| "Where do things stand?" · "What's waiting on me?" · "Can we close September?" | `lucid:workspace-status` |
+| "How are we doing?" · "Give me the month-end review" | `lucid:financial-position-review` |
+| "Why did gross margin drop?" · "Show OpEx as % of revenue" | `lucid:pl-and-margin-analysis` |
+| "What's our runway?" · "Where did the cash go?" | `lucid:cash-and-runway` |
+| "Are we on budget?" | `lucid:budget-vs-actual` |
+| "What's our working capital?" · "How much do we owe?" | `lucid:balance-sheet-review` |
+| "Why is this number what it is?" · "Show me the entries behind it" | `lucid:explain-and-audit` |
+| "Why is this check failing?" · "Why is this account on that line?" | `lucid:investigate-data-issue` |
+| "How do I import journal entries?" · "Where do I close a period?" | `lucid:product-help` |
+| "Build the board pack for Q3" | `lucid:board-pack` |
 
-A Python helper (`scripts/lucid_utils.py`) parses Lucid's money envelope, reads
-large tool results, and builds common-size / variance / ratio tables so every
-analysis skill computes numbers the same, correct way. `scripts/lucid_utils.py`
-is the canonical source; each skill **bundles its own copy** under
-`skills/<name>/scripts/lucid_utils.py` so it stays self-contained and works in any
-runtime (Claude Code, cowork, or claude.ai, where only the skill's own files are
-loaded). The helper is an **optimization** — when no code interpreter is
-available, the skills parse the report JSON inline (the values are already
-dollars; see `lucid-platform-guide`).
-
-> Maintainers: `scripts/lucid_utils.py` is the source of truth. After editing it,
-> re-sync the per-skill copies (e.g. `for d in skills/*/scripts; do [ -f "$d/lucid_utils.py" ] && cp scripts/lucid_utils.py "$d/"; done`).
+`lucid:lucid-platform-guide` is the foundation the others build on. It covers
+choosing the company, period and view, reading figures, the tie-out checks, and
+how to answer: quote figures exactly as Lucid reports them, disclose projected
+amounts, and label anything derived.
 
 ## Install
 
-### Claude Code / cowork
+### Claude Code / Cowork
 
-The plugin ships an `.mcp.json` declaring the remote Lucid connector, so installing
-the plugin wires up both the skills and the connector.
+The plugin ships an `.mcp.json` that connects to Lucid, so installing it sets up
+both the skills and the connector.
 
 ```bash
-# Try it without installing (point at this directory):
-claude --plugin-dir /path/to/lucid-skills
-
-# Or add it as a marketplace and install:
-/plugin marketplace add /path/to/lucid-skills      # or a git URL
+/plugin marketplace add amir-autom8labs/lucid-skills
 /plugin install lucid@lucid-skills
 ```
 
-On first tool call Claude Code runs the OAuth flow (Auth0 Universal Login). Log in
-as a user with Lucid access; the connector turns active and the report tools work.
+On the first Lucid tool call, Claude opens a browser to sign in to Lucid.
 
 ### Claude.ai
 
 1. Add the connector once: **Settings → Connectors → Add custom connector**
-   (requires a paid plan). URL: `https://lucid-mcp-xnaw7oe2ga-uc.a.run.app/mcp`
-   → log in via Auth0 → approve read-only access.
-2. Add the **skills** (this plugin) from the plugin/marketplace UI.
-3. In a new chat, enable the connector and the skills. Tip: in the first message
-   say "use Lucid" so Claude reaches for the tools.
+   (paid plans). URL: `https://lucid-mcp-fmrq47kzya-uc.a.run.app/mcp`. Sign in
+   with your Lucid account and approve read-only access.
+2. Add the skills from this repository (each folder under `skills/` is one skill).
+3. In a chat, enable the connector. Saying "use Lucid" in your first message
+   helps Claude reach for it.
 
-## Configure your endpoint
+## How it differs from the in-app assistant
 
-The bundled `.mcp.json` points at the Lucid MCP endpoint
-(`https://lucid-mcp-xnaw7oe2ga-uc.a.run.app/mcp`). To target a different
-environment, change the `url` in `.mcp.json` (Claude Code / cowork) or enter the
-corresponding URL when adding the custom connector (Claude.ai). The connector
-authenticates each user via Auth0 and is row-level scoped to what that user is
-granted.
+The analysis, checks and tools are the same. A few things work differently:
 
-## Notes for the curious
+- **Figures are written into the answer.** In the app, figures appear in
+  interactive blocks next to the reply. Here Claude quotes them in the text and
+  tables exactly as Lucid reports them. Anything derived (a ratio Lucid doesn't
+  publish, a share of total) is computed with the bundled scripts and labelled.
+- **Screens are named by menu path** (e.g. "Work → Cash accounts") instead of
+  in-app buttons.
+- **Memory is your Claude's memory**, if you have it enabled. The skills tell
+  Claude to keep personal preferences (report names, thresholds) separate from
+  company figures, which should never land in memory that follows you across
+  unrelated chats.
+- **Exports** go through whatever pdf / pptx / xlsx skills your Claude has.
 
-- **Money is pre-formatted.** Every monetary field arrives as
-  `{"amount": "1234567.89", "currency": "USD", "units": "major"}` — already in
-  dollars. Never divide by 100. The shared helper parses these.
-- **Tie-outs matter.** Every report carries a reconciliation check. The skills
-  verify it before trusting a number, the way a controller would.
-- **Reports can be large.** A full P&L is ~170 rows and can overflow a single tool
-  result into a spilled file; the skills retrieve compactly and extract with `jq`/
-  Python. See `lucid-platform-guide`.
+## Helper scripts
+
+Each analysis skill bundles `scripts/lucid_utils.py` (money parsing, tie-out
+status, identity-based row lookup, ratios) plus a skill-specific script. Claude
+runs them when it has code execution. Without it, the skills read the report
+JSON directly. `scripts/lucid_utils.py` at the root is the canonical copy. See
+[MAINTAINING.md](MAINTAINING.md).
+
+## Notes
+
+- **Money arrives in dollars** (major units) as
+  `{"amount": "1234567.89", "currency": "USD", "units": "major"}`. Never divide by 100.
+- **Tie-outs come first.** Every report carries a reconciliation check, and the
+  skills verify it before relying on a number.
+- **Projected entries.** In an open month, Lucid's default view fills recurring
+  costs that aren't booked yet with projected entries. The skills always say how
+  much of a figure is projected.
+- **Budget vs actual** is not yet available in Lucid. The skill says so rather
+  than inventing variances.
