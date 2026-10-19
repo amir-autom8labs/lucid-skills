@@ -1,18 +1,27 @@
 ---
 name: budget-vs-actual
 description: >-
-  Budget-vs-actual variance analysis from the Lucid CFO connector — answers "are
-  we on budget", "BVA", "did we hit our numbers", "where are we vs plan", "what's
-  our budget variance", "are we over/under plan", "where are we overspending",
-  and any favorable/unfavorable variance question. Use this WHENEVER the user
-  compares actuals to plan/budget: ranking variances by materiality, splitting
-  favorable from unfavorable, and explaining the drivers behind the miss. Pulls
-  Lucid's get_bva (a P&L with actual/budget/variance per row) and reads it with
-  the correct sign interpretation per section (over-spending an expense is bad;
-  missing a revenue target is bad). Builds on lucid:lucid-platform-guide.
+  analyze-statement intent for budget vs actual: variance analysis on the Lucid
+  connector — answers "are we on budget", "BVA", "did we hit our numbers", "where are
+  we vs plan", "what's our budget variance", "are we over/under plan", "where are we
+  overspending", and any favorable/unfavorable variance question. Use this WHENEVER the
+  user compares ACTUALS to PLAN/BUDGET: ranking variances by materiality, splitting
+  favorable from unfavorable, explaining the drivers of the miss, and reading each
+  variance with the correct sign per section (over-spending an expense is bad; missing
+  a revenue target is bad). Do NOT use it for a plain P&L / margin read with NO budget
+  comparison → pl-and-margin-analysis; proving one figure → explain-and-audit; or the
+  whole-business "how are we doing" snapshot → financial-position-review. This requires
+  an actual-vs-budget comparison.
 ---
 
 # Budget vs Actual (variance analysis)
+
+> **Temporarily unavailable.** `get_bva` currently returns a "budget-vs-actual is
+> not available yet" stub instead of variance data. When the tool reports this,
+> **relay that budget-vs-actual isn't available yet** — don't present, compute, or
+> invent variance numbers, and don't run the variance scripts on a stub payload.
+> The rest of this skill (row map, sign rules, ranking, worked example) is kept
+> intact so the flow re-enables cleanly once the backend re-exposes the data.
 
 Answer three questions, in order: **where are we vs plan, by how much, and why.**
 Then rank the misses by materiality and label each one favorable or unfavorable
@@ -21,9 +30,9 @@ that `variance = actual − budget` has the same sign for a revenue line and a c
 line, but the opposite implication — so a mechanical "positive = good" reading is
 wrong half the time.
 
-Read `lucid:lucid-platform-guide` first for the mechanics this skill assumes:
-entity resolution, period grammar, view modes, the money envelope, the tie-out
-discipline, and how to handle spilled payloads. This skill only covers what is
+The connector mechanics this skill assumes — entity resolution, period grammar,
+view modes, the money envelope, and the tie-out discipline — live in the tool
+docstrings and the system prompt. This skill only covers what is
 specific to BVA.
 
 ## What get_bva gives you
@@ -38,11 +47,15 @@ instead of a single `amount`.
   S&M, G&A, Financial, Other, Taxes). **Row numbers and labels are configured
   per company**, so don't hard-code them — prefer the stable `totals.*` keys
   (`revenues_actual`/`_budget`/`_variance`, etc.) and resolve detail rows by
-  label/section. (Full map: the P&L section of `reference/report-reference.md` in
-  the platform guide.)
+  label/section. (Full map: the P&L section of `reference/report-reference.md`.)
 - **`view` applies to the ACTUAL side only.** The budget is **view-invariant** —
   `base`, `aje`, and `lucid` all return the same budget. So `base` vs `lucid`
   changes only the actual column (and therefore the variance). Default to `lucid`.
+- **Projected entries sit on the actual side (once `get_bva` is available).**
+  In an open month, the web app's `lucid` actuals include Lucid's projected
+  recurring entries. When the tool returns a row with `projected` +
+  `basis: "projected"`, the variance is partly against an estimate: state the
+  projected part of the actual ("actual $120k, of which $95k projected").
 - **`variance = actual − budget`.** **`variance_pct = variance / |budget|`** as a
   **float fraction** (`0.479` = +47.9%), and **`null` when `budget == 0`** — a row
   with no plan mapping has an undefined percentage, not a zero one.
@@ -68,7 +81,7 @@ Income, Net Profit, EBITDA) read like revenue — higher is better. Cost lines
 Depreciation, and every expense note row) read the other way. **Never label a
 variance from the sign alone — resolve it by the row's role.** The script below
 encodes exactly this mapping. (Row numbers/labels are configured per company —
-see `reference/report-reference.md` in the platform guide; classify by section,
+see `reference/report-reference.md`; classify by section,
 not by a fixed row number.)
 
 ## Materiality — rank, don't list
@@ -92,27 +105,35 @@ A BVA has ~170 rows; most variances are noise. Surface what moves the number:
 
 ## Retrieve compactly
 
-BVA is a flow (see period grammar) and spills past the tool-result limit, so:
+BVA is a flow (see period grammar) and the full statement spills past the
+tool-result limit, so:
 
-- Pull **one period, single column of interest, no comparisons.** Do **not** pass
+- Pull **one period, `density=summary`, no comparisons.** `density=summary`
+  returns just the ~25 category rows — each with its `row_num` and
+  `{actual, budget, variance, variance_pct}` — i.e. the whole variance picture in
+  a small inline payload, every line addressable by `row_num`. Do **not** pass
   `compare`, `periods`, `include_trend`, or `include_composition` — this skill is
-  single-period variance, and those balloon the payload.
+  single-period variance, and those balloon the payload. Drill a statement block
+  — `section=opex` (or `revenue`, `cogs`, `finance`, `other`; the fixed closed set,
+  with R&D / S&M / G&A all inside `opex`) — only to compose one line.
 - Pick the period to match the question: a month (`2025-03`), a quarter
   (`2025-Q1`), or the year (`FY2025`). Don't sum months yourself — widen the period.
-- When the result spills to a file, **don't read the raw JSON.** Drive the shared
-  helper's `bva` subcommand and the variance-report script against the path:
+- If a heavier pull spills to a file, **don't read the raw JSON.** Drive the shared
+  helper's `bva` subcommand and the variance-report script (relative paths from the
+  skill dir) against the path:
 
   ```bash
-  python ${CLAUDE_PLUGIN_ROOT}/skills/budget-vs-actual/scripts/lucid_utils.py bva <spilled.json> --top 12
-  python ${CLAUDE_PLUGIN_ROOT}/skills/budget-vs-actual/scripts/lucid_utils.py totals <spilled.json>
-  python ${CLAUDE_PLUGIN_ROOT}/skills/budget-vs-actual/scripts/variance_report.py <spilled.json> --top 10
+  python scripts/lucid_utils.py bva <spilled.json> --top 12
+  python scripts/lucid_utils.py totals <spilled.json>
+  python scripts/variance_report.py <spilled.json> --top 10
   ```
 
 ## Workflow
 
 1. **Resolve the company** (`search_entities` → exact `code`) and pick the period
    + view (default `lucid`).
-2. **Call `get_bva(company, period)`** once. Expect a spill; note the file path.
+2. **Call `get_bva(company, period, density=summary)`** once — the ~25 category
+   rows read inline, each carrying its `row_num` and actual/budget/variance.
 3. **Check the tie-out** — `totals.check_delta == 0` — before trusting anything.
 4. **Read the headline** from `totals`: revenue actual vs budget, total expenses
    actual vs budget, net profit actual vs budget, each with its variance.
@@ -132,16 +153,15 @@ profit; the top-N variances by `|variance|` split into **UNFAVORABLE** and
 variance % (or "n/a" for budget-0 rows); and the tie-out line.
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/skills/budget-vs-actual/scripts/variance_report.py \
-    <bva.json> --top 10 --material 10000
+python scripts/variance_report.py <bva.json> --top 10 --material 10000
 ```
 
 ## Worked example
 
 *Illustrative example — fictional company (Acme Inc.), synthetic figures.*
 
-Demonstrate on **company ACME, period `2025-03`** (single period, no compare). The
-`get_bva` call spills to a file; run the helper / script on that path. Output:
+Demonstrate on **company ACME, period `2025-03`** (single period,
+`density=summary`, no compare). The helper / variance-report script produce:
 
 ```
 $ python lucid_utils.py totals <bva.json>
@@ -189,20 +209,24 @@ If the live `get_bva` call fails or RLS blocks the company, run the same workflo
 on any company you can access and describe the structure generically — the
 interpretation rules above don't change.
 
-## Output structure
+## Answering
 
-Present in this order:
+Follow the answer contract in `lucid-platform-guide`, applied to a variance read.
 
-1. **Tie-out** — state `check_delta` first (one line). If non-zero, lead with the
-   warning; the variances are unreliable until the books reconcile.
-2. **Headline** — Revenue, Total expenses (or OpEx), Operating income, Net profit:
-   actual vs budget vs variance, each tagged favorable/unfavorable.
-3. **Top unfavorable** — the material misses (worst dollars first), each with $
-   variance, %, and the driver line.
-4. **Top favorable** — the material beats, same shape.
-5. **Drivers / commentary** — 2–4 sentences: what moved the number and why
-   (revenue shortfall, specific cost overruns), and any null-/±100%-% plan-mapping
-   caveats. Offer `lucid:explain-and-audit` for the journal-level cause.
+Lead with the tie-out, then the bottom line (usually net profit vs plan), then:
+whether actuals beat or missed plan in the *direction that matters* given the
+sign-flip rule; which lines are the material unfavorable misses and which are the
+favorable beats; *why* (revenue shortfall, specific cost overruns); and any
+plan-mapping caveats (null / ±100% variance %).
 
-Keep it scannable; rank by materiality; never bury the lede (usually net profit
-vs plan) under leaf detail.
+- **Quote** actual, budget, variance and `variance_pct` exactly as the report
+  returns them — Lucid computes the variance; never subtract it yourself.
+- **Rank** the movers with `scripts/variance_report.py` (it ranks by size, flags
+  those above a dollar materiality threshold and labels each favorable /
+  unfavorable by line type; apply the % bar above from the reported
+  `variance_pct`), and show the material ones in a compact table.
+- Close with 2–3 follow-ups such as "Trace the S&M overrun to its journal
+  lines?" or "Show the same variance for the full quarter?".
+
+Never bury the lede under leaf detail.
+

@@ -1,18 +1,18 @@
 ---
 name: financial-position-review
 description: >-
-  The monthly-close / "how are we doing" snapshot for a company on the Lucid
-  CFO connector. Dashboard-led, cross-statement health check: pull the
-  dashboard, then corroborate against P&L, balance-sheet, and cash-flow totals,
-  verify EVERY report's tie-out, and produce a tight CFO-grade summary
-  (position, profitability, liquidity, cash trajectory, risks) citing real
-  figures. USE THIS WHENEVER someone wants the overall state of the business
-  rather than one statement — phrasings like "how are we doing", "monthly
-  review", "close review", "financial health", "give me the state of the
-  business", "where do we stand", "month-end summary", or "snapshot of
-  {company} for {month}". When the ask is scoped to one statement (just P&L,
-  just cash, just budget), prefer the focused skill instead. Reads from the
-  read-only Lucid MCP connector; builds on lucid:lucid-platform-guide.
+  cross-statement-snapshot intent: the monthly-close / "how are we doing"
+  WHOLE-BUSINESS snapshot on the Lucid connector. Dashboard-led health check ACROSS
+  every statement — pull the dashboard, corroborate against P&L, balance-sheet, and
+  cash-flow totals, verify EVERY report's tie-out, and produce a tight CFO-grade summary
+  (position, profitability, liquidity, cash trajectory, risks) citing real figures. USE
+  THIS WHENEVER someone wants the OVERALL state of the business rather than one
+  statement — "how are we doing", "monthly review", "close review", "financial health",
+  "state of the business", "where do we stand", "month-end summary", "snapshot of
+  {company} for {month}". Do NOT use it when the ask is scoped to ONE statement: just
+  the balance sheet / liquidity / "financial position as of a date" → balance-sheet-
+  review; just P&L → pl-and-margin-analysis; just cash / burn → cash-and-runway; just
+  budget → budget-vs-actual. A packaged export/board deck → board-pack.
 ---
 
 # Financial position review (the close snapshot)
@@ -21,28 +21,48 @@ This is the **"how are we doing" answer**: not one statement, but a single
 coherent read across all of them. A CFO closing the month wants four things at
 once — where do we *stand* (position), are we *making money* (profitability),
 can we *pay our bills* (liquidity), and where is *cash heading* (trajectory) —
-plus an honest list of risks. Your job is to assemble that from the dashboard
-and the three core statements, **prove each one ties out**, and write it up so a
-busy executive trusts it at a glance.
+plus an honest list of risks. Your job is to assemble that from the three core
+statements (P&L, balance sheet, cash flow), **prove each one ties out**, and write
+it up so a busy executive trusts it at a glance.
 
-> Read **`lucid:lucid-platform-guide` first** for the mechanics this skill
-> assumes: entity resolution, period grammar (`2025-03`, `FY2025`, `YTD@…`),
-> view modes (`base`/`aje`/`lucid`), the money envelope, and comparison gating.
-> This skill does **not** repeat them. It *does* restate two things — tie-out
-> discipline and compact retrieval — because they are the spine of a review.
+**A close review starts with status.** When the ask is a close / period review,
+first call `get_status(sections=["health","pending"])` and **lead with any blocking
+items** — broken tie-outs, unclassified movement, held entries, pending work — before
+the financial snapshot. A review of numbers you can't yet close on is misleading, so
+name what's blocking the close up front, then give the position read below.
 
-## Why dashboard-led
+> The connector mechanics this skill assumes — entity resolution, period grammar
+> (`2025-03`, `FY2025`, `YTD@…`), view modes (`base`/`aje`/`lucid`), the money
+> envelope, and comparison gating — live in the tool docstrings and the system
+> prompt. This skill does **not** repeat them. It *does* restate two things —
+> tie-out discipline and compact retrieval — because they are the spine of a review.
 
-The dashboard is the only Lucid call that pre-bundles the headline KPIs (cash,
-runway, revenue QTD, gross margin), the OpEx mix, and a one-shot `tie_out_ok`
-flag. It's the fastest way to *frame* the month. But a dashboard is a summary —
-you still **corroborate it against the underlying statements** so the story
-holds up: the dashboard's gross-margin % should be reflected in the P&L, its
-cash delta should equal the cash-flow `total_change`, and its tie-out flag is
-one of four you must check, not a substitute for the rest.
+## Framing the month — the KPI bundle is back
 
-So the shape of a review is: **dashboard to frame → P&L / BS / CF to corroborate
-→ tie-out on all four → write up.**
+> **Projected entries.** In an open month the `lucid` figures (reports and the
+> KPI bundle) include Lucid's projections of recurring P&L entries not booked
+> yet. A KPI whose figure includes projections carries `basis: "projected"`
+> (and, for a money KPI, its `projected` part): state it beside the figure
+> ("operating profit $120k, with $95k of the costs under it projected"). Cash, burn,
+> runway and the month's story are booked, as are health checks and close
+> readiness.
+
+`get_status(company, period=…, sections=["kpis", "moved"])` frames a review in
+one call: the headline KPIs (**cash · runway · revenue · gross margin ·
+operating profit · net profit · burn**) and the month's largest changes, both
+computed once in the backend — the same figures the CFO dashboard draws.
+The old `get_dashboard` is withdrawn; this is its
+replacement, and it is **opt-in**, so those sections must be named.
+
+Use it to *frame*, then still pull the three statements to *review*: the bundle
+carries no statement lines, no account detail and no tie-out arithmetic. Quote
+its figures verbatim (money is already in major units — **never divide by 100**;
+`runway` is months and `gross_margin` is basis points) and never recompute one
+off a statement, which would put two numbers for one month in front of the
+reader.
+
+So the shape of a review is: **frame with `get_status` → pull P&L / BS / CF →
+tie-out on all three → write up.**
 
 ## Tie-out discipline (non-negotiable here)
 
@@ -53,8 +73,7 @@ literal `Tie-out: OK` / `Tie-out: OFF` line.
 
 | Report | Check field | Tied out when |
 |---|---|---|
-| Dashboard | `tie_out_ok` | `true` |
-| P&L | `totals.check_delta` | `= 0` |
+| P&L | `totals.check_delta` | `= 0` **and** `totals.check_unresolved` empty |
 | Balance sheet | `totals.balance_check_delta` | `= 0` |
 | Cash flow | `tieout.period_delta` | `= 0` |
 
@@ -67,12 +86,15 @@ credibility — don't bury it.
 These reports are large (a P&L is ~170 rows). For a review you only need the
 **`totals` block and a handful of subtotal rows** — never the leaf detail. So:
 
-- Pull **one period, one view, no extras.** Do **not** pass `compare` /
-  `include_trend` / `include_composition` — they multiply the payload and can
-  overflow the tool result. The dashboard already gives you trend context
-  (deltas + sparklines) for free.
-- If a tool result **spills to a file**, do not read the raw JSON back. Run the
-  shared helper or `position_review.py` against the file path instead.
+- Pull **one period, one view, `density=summary`, no extras.**
+  `density=summary` returns just the ~25 category rows (each with its `row_num`)
+  plus the `totals` block — exactly what a review needs, read inline. Do **not**
+  pass `compare` / `include_trend` / `include_composition` — they multiply the
+  payload and can overflow the tool result. If you want a prior-period delta for
+  the headline, add a single `compare` on the P&L only.
+- If a heavier tool result **spills to a file**, do not read the raw JSON back.
+  Run the shared helper or `position_review.py` (relative path `scripts/…`)
+  against the file path instead.
 
 ## The worked flow — company ACME, 2025-03, view `lucid`
 
@@ -80,63 +102,61 @@ These reports are large (a P&L is ~170 rows). For a review you only need the
 > All numbers below are made up and internally consistent for teaching; they are
 > not real client data.
 
-### 1. Resolve and frame with the dashboard
+### 1. Resolve, then frame from the statements
 
 ```text
 search_entities("Acme") → code "ACME"        # never guess a handle
-get_dashboard(company="ACME", period="2025-03", view="lucid")
 ```
 
-Read it through the unit-aware helper so you don't misread the mixed units
-(`bps` is basis-points×100 → divide by 100 for %; `months` is an int; `cents`
-unit actually carries a **major-units** money envelope — **never divide by
-100**):
+The headline figures come from `get_status(sections=["kpis"])` (above); the
+statements you pull in step 2 carry the detail behind them — **cash** in the
+balance-sheet `totals.cash`, **revenue / gross margin / EBITDA** in the P&L `totals`,
+**cash movement** in the cash-flow `totals`. Cite the KPI card for a headline and
+the statement for what is inside it; do not quote both as two figures. (Watch
+units either way: money envelopes are already in major units — **never divide by
+100**.)
 
-```bash
-python ${CLAUDE_PLUGIN_ROOT}/skills/financial-position-review/scripts/lucid_utils.py kpis dashboard.json
-```
+For Acme Inc. / Mar 2025 the headline frame reads:
 
-For Acme Inc. / Mar 2025 this frames the month:
-
-| KPI | Value | vs |
+| Figure | Source | Value |
 |---|---|---|
-| Cash | **$8,000,000** | −$480,000 vs Feb 2025 |
-| Runway | **14 mo** | at current burn |
-| Revenue QTD | **$250,000** | −40% YoY (vs Q1 2024) |
-| Gross margin | **−20.00%** | −8.0pp vs Feb 2025 |
+| Cash | BS `totals.cash` | **$8,000,000** (−$480,000 vs Feb 2025) |
+| Runway | `get_status` `kpis` | **18 months** (quoted from the card) |
+| Revenue (Q1) | P&L `totals` | **$250,000** (−40% YoY vs Q1 2024) |
+| Gross margin (Q1) | P&L `totals` | **−20.00%** |
 
-OpEx donut: R&D $400,000 · S&M $300,000 · G&A $150,000 = **$850,000 total**.
-`tie_out_ok: true`. So the frame is: well-capitalized (14mo runway) but revenue
-has collapsed YoY and gross margin is *negative* — selling below cost. That's
-the thread to pull on in the statements.
+OpEx (from the P&L notes): R&D $400,000 · S&M $300,000 · G&A $150,000 =
+**$850,000 total**. So the frame is: well-capitalized but revenue has collapsed
+YoY and gross margin is *negative* — selling below cost. That's the thread to pull
+on in the statements.
 
 ### 2. Corroborate against the three statements
 
 Pull each as a **single period, no extras**, and save to files:
 
 ```text
-get_pl(company="ACME", period="2025-Q1", view="lucid")          → pl.json
-get_balance_sheet(company="ACME", period="2025-03", view="lucid") → bs.json
-get_cash_flow_direct(company="ACME", period="2025-03", view="lucid") → cf.json
+get_pl(company="ACME", period="2025-Q1", view="lucid", density="summary")          → pl.json
+get_balance_sheet(company="ACME", period="2025-03", view="lucid", density="summary") → bs.json
+get_cash_flow_direct(company="ACME", period="2025-03", view="lucid", density="summary") → cf.json
 ```
 
-> Period note: the dashboard's revenue/margin KPIs are **quarter-to-date**, so
-> pull the P&L for `2025-Q1` to corroborate them on the same basis; balance
-> sheet and cash flow are read at/through the month `2025-03`.
+> Period note: revenue/margin are most useful **quarter-to-date**, so pull the
+> P&L for `2025-Q1`; balance sheet and cash flow are read at/through the month
+> `2025-03`.
 
 Pull just the totals + tie-out from each spilled file:
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/skills/financial-position-review/scripts/lucid_utils.py totals pl.json
-python ${CLAUDE_PLUGIN_ROOT}/skills/financial-position-review/scripts/lucid_utils.py totals bs.json
-python ${CLAUDE_PLUGIN_ROOT}/skills/financial-position-review/scripts/lucid_utils.py totals cf.json
+python scripts/lucid_utils.py totals pl.json
+python scripts/lucid_utils.py totals bs.json
+python scripts/lucid_utils.py totals cf.json
 ```
 
 Validated figures for Acme Inc. (synthetic):
 
 - **P&L (Q1-2025):** net_profit **−$880,000**, gross_margin **−$50,000**,
-  ebitda **−$890,000**, `check_delta $0`. → confirms the dashboard's negative
-  gross margin; the quarter is deeply loss-making.
+  ebitda **−$890,000**, `check_delta $0`. → this is where the negative gross
+  margin comes from; the quarter is deeply loss-making.
 - **Balance sheet (Mar 2025):** total_assets **$8,200,000**, total_equity
   **−$4,400,000** wire → **+$4.4M positive equity** once sign-flipped
   (assets $8.2M = liabilities $3.8M + equity $4.4M), `balance_check_delta $0`. →
@@ -144,103 +164,101 @@ Validated figures for Acme Inc. (synthetic):
   by accumulated losses (~$15.0M paid-in vs ~$10.6M cumulative losses).
 - **Cash flow (Mar 2025):** net_operating **−$450,000**, net_investing
   **−$30,000**, total_change **−$480,000**, `tieout.period_delta $0`. → the
-  −$480,000 here **equals the dashboard's cash delta** — corroboration
-  achieved. Burn is operating, not investing.
+  −$480,000 **equals the −$480,000 move in the balance-sheet cash figure** —
+  corroboration achieved. Burn is operating, not investing.
 
-### 3. Verify all four tie-outs at once
+### 3. Verify all three tie-outs at once
 
 `position_review.py` consolidates the snapshot and, most importantly, lays the
-four reconciliations side by side so nothing slips through:
+three reconciliations side by side so nothing slips through:
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/scripts/financial-position-review/scripts/position_review.py \
-    --dashboard dashboard.json --pl pl.json --bs bs.json --cf cf.json
+python scripts/position_review.py \
+    --pl pl.json --bs bs.json --cf cf.json
 ```
 
-All four read `OK` (delta $0 / `true`) for Acme Mar 2025 → the snapshot is
-trustworthy. Had any read `OFF`, the script flags `OVERALL: OFF` and you lead
-your write-up with that.
+All three read `OK` (delta $0) for Acme Mar 2025 → the snapshot is trustworthy.
+Had any read `OFF`, the script flags `OVERALL: OFF` and you lead your write-up
+with that. (The script still accepts an optional `--dashboard` input for when the
+KPI bundle returns, but that tool is withdrawn today — don't pass it.)
 
-> **Row-number caveat.** `position_review.py` reads named totals by *row number*
-> (e.g. P&L revenue at row 5). Row numbers and labels are **configured per
-> company**, so don't treat any specific row index as universal — confirm them
-> against the actual response and the foundation guide's
-> `reference/report-reference.md` before relying on them.
+> **How this script names lines.** `position_review.py` resolves every figure by
+> IDENTITY — the `totals` block first, then a row's `role` (`gross_margin`,
+> `operating_income`, `net_profit`, `ebitda`, `total_assets`, `total_equity`),
+> and `heading_key: revenues` for the top line. It reads no row numbers, because
+> a row number names a different line on every company whose layout differs from
+> the reference chart's. Apply the same rule to anything you compute yourself:
+> see the foundation guide's `reference/report-reference.md` for the identity
+> vocabulary per report.
 
 ### 4. Write it up
 
 Map the corroborated figures into the output template below. Lead with the
 tie-out line, then position → profitability → liquidity & cash → risks.
 
-## Output structure
+## Answering
 
-Produce a compact, scannable summary in this order. Always cite **real figures**
-(from the helper, never re-keyed by hand), state the **view and period**, and
-include the explicit tie-out line.
+A position review is the widest answer this connector produces, so the answer
+contract in `lucid-platform-guide` matters most here.
 
-```text
-## <Company> — Financial position, <Period> (view: lucid)
-Tie-out: OK   (dashboard ✓ · P&L ✓ · balance sheet ✓ · cash flow ✓)
-            └─ if any OFF: "Tie-out: OFF — <report> delta <$X>; figures provisional"
+Write the snapshot in this order:
 
-**Headline.** One or two sentences: the state of the business in plain terms.
-e.g. "Well-capitalized — $8.0M cash, 14 months runway — but revenue has
-collapsed (−40% YoY) and the business is selling below cost (gross margin
-−20.0%), burning ~$0.5M/mo."
+1. **Tie-out first.** If any of the three reconciliations is off, lead with it *by
+   name* and call the figures provisional — one OFF report taints the whole snapshot.
+2. **Headline** — the state of the business in one or two sentences
+   (well-capitalized vs stretched; growing vs contracting; profitable vs burning).
+3. **Profitability** — revenue direction, margin health and its driver, where the
+   result lands.
+4. **Liquidity & cash** — cash trend and the cash cushion against burn. **The
+   runway is the `get_status` `kpis` card, quoted, never divided out of the
+   statements** (when its amount is `null`, give its `comparator`'s reason: a
+   month that is not burning has no runway clock). Then equity structure
+   (positive vs eroding vs deficit — read the sign carefully) and where cash went.
+5. **Risks & flags** — the 2–4 things a CFO acts on.
 
-**Profitability.** Revenue $X (Δ YoY), gross margin $X / %, operating income $X,
-EBITDA $X, net profit/(loss) $X. Name the driver of the result.
+Back the narrative with a compact scorecard of quoted figures: the KPI strip
+(cash, runway, revenue, gross margin, operating profit, net profit, burn) plus
+total assets, total equity and net operating cash, each from its tool result.
+Always name the **view and period** — the figures are meaningless without them.
+Close with 2–3 follow-ups such as "Drill into what's driving the operating
+burn?" or "Compare this month against last?".
 
-**Liquidity & cash.** Cash $X (Δ vs prior month), runway X mo at current burn,
-total assets $X, total equity $X (sign-flip the wire value; only call it a
-*deficit* if the flipped figure is negative). Where cash went this month:
-operating $X / investing $X / financing $X.
-
-**Risks & flags.** The 2–4 things that actually matter: negative gross margin,
-revenue decline, eroding/deficit equity, runway threshold, any OFF tie-out, any
-unexpected sign. Be direct; this is the part a CFO acts on.
-```
-
-### Worked example output (Acme Inc., 2025-03)
+### Worked example (Acme Inc., 2025-03) — the shape of the answer
 
 **Illustrative example — fictional company (Acme Inc.), synthetic figures.**
 
-```text
-## Acme Inc. — Financial position, Mar 2025 (view: lucid)
-Tie-out: OK   (dashboard ✓ · P&L ✓ · balance sheet ✓ · cash flow ✓)
-
-**Headline.** Well-funded but unprofitable. $8.0M cash and ~14 months of
-runway, but Q1 revenue is only $250K (−40% YoY) and gross margin is negative
-(−20.0%) — the company is selling below cost while carrying a full opex base.
-
-**Profitability (Q1-2025).** Revenue $250,000 (−40% YoY). Gross margin
-−$50,000 (−20.0%). OpEx $850,000 (R&D $400,000 · S&M $300,000 · G&A $150,000).
-EBITDA −$890,000. Net loss −$880,000.
-
-**Liquidity & cash (Mar 2025).** Cash $8,000,000, down $480,000 on the month;
-runway 14 mo at current burn. Total assets $8,200,000 (almost entirely cash).
-Total equity +$4.4M (positive), but eroding — ~$10.6M accumulated losses against
-~$15.0M paid-in capital. Cash use this month was operating (−$450,000) plus modest
-investing (−$30,000); no financing inflow.
-
-**Risks & flags.**
-- Negative gross margin (−20.0%, worsening 8.0pp MoM) — unit economics are upside-down.
-- Revenue down 40% YoY — top line has fallen off, not a margin-only problem.
-- Equity still positive ($4.4M) but eroding ~$0.9M/quarter at the current loss rate.
-- Runway 14 mo is comfortable today but shrinks fast if burn holds and revenue doesn't recover.
-```
+> *"Acme is well-funded but unprofitable. Tie-outs pass on all three statements,
+> so the picture is trustworthy. Cash is $8.0M against a monthly operating burn
+> of $440k — 18 months of runway on Lucid's own runway figure. But Q1 revenue is
+> down sharply year-over-year and gross margin is negative: Acme is selling below
+> cost while carrying a full OpEx base, so the loss is structural, not a one-off.
+> Cash is draining through operations, not investing or financing, and book
+> equity — still positive at $4.4M — erodes with each loss-making quarter.*
+>
+> | | Mar-2025 |
+> |---|---:|
+> | Cash | $8,000,000 |
+> | Runway | 18 months |
+> | Net profit | −$480,000 |
+> | Total equity | $4,400,000 |
+>
+> *Watch: the negative unit economics, the top-line decline, and how fast the
+> equity cushion is drawn down if burn holds."*
+>
+> Follow-ups: "Drill into what's driving the operating burn?" · "Compare March
+> with February?"
 
 ## Pitfalls
 
-- **Don't divide money by 100.** Envelope `amount` is already dollars. The
-  dashboard's `cents` *unit label* still carries a major-units envelope — the
-  helper handles it; trust the helper, not the label.
-- **Don't read `bps`/`months` as dollars.** `-3966` bps = −39.66%; runway `17`
-  is months. Use `kpi_view` / the `kpis` CLI.
-- **Don't skip a tie-out** because the dashboard said `true`. The dashboard flag
-  covers the dashboard; the P&L, BS, and CF each carry their own.
+- **Don't divide money by 100.** Envelope `amount` is already dollars; a `cents`
+  *unit label* still carries a major-units envelope — trust the helper, not the label.
+- **Don't read `bps` as dollars.** `-3966` bps = −39.66% (divide by 100 for percent).
+- **Don't invent a runway number.** The precomputed runway KPI is temporarily
+  unavailable — report cash + burn and say so, rather than dividing to a month count.
+- **Don't skip a tie-out.** The P&L, BS, and CF each carry their own reconciliation;
+  check all three.
 - **Don't add `compare`/`include_trend`** to corroboration pulls — they overflow
-  and you don't need them; the dashboard already supplies trend context.
+  and you don't need them; a single P&L `compare` is enough for a delta.
 - **Don't sum single months** for the P&L/cash flow — use a wider period
   (`2025-Q1`) so flows aggregate correctly.
 - **Flip the sign of equity/liabilities** when presenting to a human (they're

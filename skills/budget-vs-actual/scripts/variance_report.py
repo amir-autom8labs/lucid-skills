@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Build a ranked budget-vs-actual variance report from a Lucid ``get_bva`` payload.
 
+NOTE: ``get_bva`` is temporarily soft-disabled and returns a "budget-vs-actual is
+not available yet" stub, so this script has no real payload to rank right now.
+It is kept intact for when the tool is re-enabled; until then, relay that
+budget-vs-actual isn't available yet instead of running it on a stub.
+
 Reads a (possibly spilled-to-file) BVA report and prints:
 
 * the headline actual / budget / variance for revenue, OpEx, and net profit,
@@ -29,20 +34,14 @@ import os
 import sys
 from decimal import Decimal
 
-# Import the shared helper from the plugin's scripts dir. ``CLAUDE_PLUGIN_ROOT``
-# is set when the skill runs inside the plugin; fall back to this file's location
-# (skills/<skill>/scripts/ -> ../../../scripts).
-_PLUGIN_ROOT = os.environ.get(
-    "CLAUDE_PLUGIN_ROOT",
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
-)
-sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "scripts"))
 # Self-contained: this skill bundles lucid_utils.py beside this script. Prepend
-# this script's own dir LAST so it wins on sys.path — the import then resolves in
-# any runtime (incl. claude.ai), whether or not CLAUDE_PLUGIN_ROOT is set.
+# this script's own dir so `from lucid_utils import ...` resolves to the sibling
+# copy in any runtime (Claude Code, Managed Agents, claude.ai) — the whole skill
+# dir, scripts included, is uploaded together, so no absolute plugin path is needed.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lucid_utils import (  # noqa: E402
+    expense_polarity,
     fmt,
     load_json,
     to_decimal,
@@ -50,50 +49,45 @@ from lucid_utils import (  # noqa: E402
     variance_table,
 )
 
-# P&L/BVA row numbers whose increase is an *expense* (more actual than budget is
-# bad). Everything else on the income statement (revenue, gross margin, the
-# income/profit subtotals) reads the other way: more is good. Subtotal expense
-# lines (13 Total OpEx, 27 Total expenses) and the detail expense lines (10 R&D,
-# 11 S&M, 12 G&A, 6 COGS, 17 Financial, 18 Other, 21 Taxes, 29 Depreciation) are
-# expenses; note-detail expense rows live at row_num >= 33.
-_EXPENSE_SUMMARY_ROWS = {6, 10, 11, 12, 13, 17, 18, 21, 27, 29}
-# Note sections that are pure expense detail (see report-reference P&L note map):
-#   Note 2 COGS 58-84, Note 3 R&D 86-106, Note 4 S&M 109-137, Note 5 G&A 140-175,
-#   Note 6 Financial 178-191, Note 7 Other 194-198, Note 8 Taxes 201-208.
-_EXPENSE_NOTE_RANGE = range(58, 209)
-# Revenue note detail (Note 1, rows 35-53) is revenue, not expense.
-_REVENUE_NOTE_RANGE = range(35, 54)
+# Which side of the bottom line a row sits on is resolved by IDENTITY, via
+# ``lucid_utils.expense_polarity`` — never by its row number.
+#
+# This block used to be ten pinned P&L rows plus two pinned note RANGES
+# (``_EXPENSE_SUMMARY_ROWS = {6, 10, 11, ...}``, ``range(58, 209)``,
+# ``range(35, 54)``). They were the most dangerous pins in the plugin and they
+# outlived the sweep that removed every other one, because a leading underscore
+# and a SET literal slipped past the scan.
+#
+# Dangerous because they do not merely report a wrong FIGURE — they decide a
+# VERDICT. On a tenant with five operating-expense functions every row below the
+# band shifts by two, so real expense rows fall out of the summary set and get
+# revenue treatment while revenue note rows slide into the expense range: two
+# lines swap sides at once and the report still looks well-formed. "Spent $80k
+# more than plan" then prints as FAVORABLE.
+#
+# The ranges were worse than the scalars. A pinned range claims a whole SPAN of
+# a layout that shifts, so it silently gains and loses members together.
+
+# The verdict for a row whose side could not be resolved. NOT a default guess:
+# inverting a variance is worse than declining to judge it, because a wrong
+# verdict is read as a finding while a declined one is read as a question.
+UNKNOWN = "UNKNOWN"
 
 
-def _is_expense_row(row_num: int | None) -> bool:
-    """Does an *increase* in this row's actual hurt the bottom line?
-
-    True for cost/expense lines (over-budget = unfavorable). False for revenue and
-    for the profit subtotals (under-budget = unfavorable). Defaults to revenue-like
-    treatment for unknown rows, which is the safe reading for top-of-statement lines.
-    """
-    if row_num is None:
-        return False
-    if row_num in _EXPENSE_SUMMARY_ROWS:
-        return True
-    if row_num in _REVENUE_NOTE_RANGE:
-        return False
-    if row_num in _EXPENSE_NOTE_RANGE:
-        return True
-    return False
-
-
-def classify(row_num: int | None, variance: Decimal) -> str:
-    """FAVORABLE / UNFAVORABLE / NEUTRAL for a variance, by section then sign.
+def classify(is_expense: bool | None, variance: Decimal) -> str:
+    """FAVORABLE / UNFAVORABLE / NEUTRAL for a variance, by side then sign.
 
     * Expense row: positive variance (spent more than planned) is UNFAVORABLE.
     * Revenue / profit row: positive variance (beat the plan) is FAVORABLE.
     * Exactly on plan: NEUTRAL.
+    * Side unresolved (``is_expense is None``): ``UNKNOWN`` — say so, never guess.
     """
     if variance == 0:
         return "NEUTRAL"
+    if is_expense is None:
+        return UNKNOWN
     over = variance > 0
-    if _is_expense_row(row_num):
+    if is_expense:
         return "UNFAVORABLE" if over else "FAVORABLE"
     return "FAVORABLE" if over else "UNFAVORABLE"
 
@@ -117,7 +111,7 @@ def headline(bva: dict) -> None:
         actual = to_decimal(totals.get(f"{prefix}_actual"))
         budget = to_decimal(totals.get(f"{prefix}_budget"))
         var = to_decimal(totals.get(f"{prefix}_variance"))
-        tag = "" if var is None else f"  [{classify(None if not expense else 6, var)}]"
+        tag = "" if var is None else f"  [{classify(expense, var)}]"
         print(
             f"  {label:<16} actual {fmt(actual):>14}   "
             f"budget {fmt(budget):>14}   var {fmt(var):>14}{tag}"
@@ -133,18 +127,27 @@ def headline(bva: dict) -> None:
 def ranked(bva: dict, top: int, threshold: Decimal) -> None:
     """Print the top-N variances by |variance|, split favorable / unfavorable."""
     table = variance_table(bva)  # already ranked by |variance|, all rows
+    # row_num -> is-expense, resolved by identity. A row ABSENT from this map
+    # gets no verdict rather than a guessed one.
+    polarity = expense_polarity(bva)
     # Drop subtotals that merely echo a detail line we already show? Keep them:
     # subtotals are the headline drivers and are what a reader scans first.
     fav: list[dict] = []
     unfav: list[dict] = []
+    unknown: list[dict] = []
     for r in table[:top]:
-        verdict = classify(r["row"], r["variance"])
+        verdict = classify(polarity.get(r["row"]), r["variance"])
         r["_verdict"] = verdict
         r["_material"] = _is_material(r["variance"], threshold)
         if verdict == "FAVORABLE":
             fav.append(r)
         elif verdict == "UNFAVORABLE":
             unfav.append(r)
+        elif verdict == UNKNOWN:
+            # Listed, never dropped. A material variance silently missing from
+            # both blocks is indistinguishable from one that did not occur —
+            # the reader would conclude the line was fine.
+            unknown.append(r)
 
     def block(title: str, rows: list[dict]) -> None:
         print(f"\n{title}")
@@ -165,6 +168,14 @@ def ranked(bva: dict, top: int, threshold: Decimal) -> None:
 
     block("UNFAVORABLE (worst misses first)", unfav)
     block("FAVORABLE (best beats first)", fav)
+    if unknown:
+        block("SIDE NOT IDENTIFIED (no verdict — do NOT call these good or bad)", unknown)
+        print(
+            "    ^ these rows carry no band_key / heading_key / role this script "
+            "recognises,\n      so whether over-budget is good or bad is unknown. "
+            "Report the variance and\n      say the direction could not be "
+            "determined; never guess a side."
+        )
     print("\n  * = material (|variance| >= threshold); n/a % = no budget mapping")
 
 

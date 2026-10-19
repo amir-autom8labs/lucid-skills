@@ -1,6 +1,6 @@
 # Cash-flow reference — rows, tie-out, and burn/runway recipes
 
-Companion detail for `cash-and-runway`. The canonical row maps and response
+Supporting detail for `cash-and-runway`. The canonical row maps and response
 shapes live in `lucid:lucid-platform-guide` → `reference/report-reference.md`;
 this file is the cash-specific cut plus worked recipes. Read the platform guide
 for the money envelope, view modes, and payload handling.
@@ -22,7 +22,7 @@ for the money envelope, view modes, and payload handling.
 | `opening_cash` / `closing_cash` | Rows 43 / 44 | Position |
 | `check` | Row 45, should be 0 | Sanity |
 | `other_formula` | Projection / memo formulas (rows 48–60) | Usually ignore |
-| `unclassified` | Row 9999 "Other" | **Non-zero = lines escaped classification — flag it** |
+| `unclassified` | the row whose `row_type` is `unclassified` (label "Unclassified") | **Non-zero = lines escaped classification — flag it** |
 
 `section` ∈ `operating | investing | financing | meta | breakdown | other`.
 The `breakdown` section (rows 62+) holds per-line note detail; each breakdown row
@@ -67,7 +67,7 @@ headline figures; treat specific row numbers as examples, not constants.
 | 44 | meta | Cash at end of period (closing_cash) |
 | 45 | meta | Check (should be 0) |
 | 62+ | breakdown | Per-category note detail (parent/group_key) |
-| 9999 | operating | Other / unclassified |
+| *(varies)* | operating | Unclassified — find it by `row_type == 'unclassified'`, never by row number |
 
 Note: a **SAFE** typically also appears on the **balance sheet** as a long-term
 liability. On the cash flow it's the financing SAFE row when the cash lands.
@@ -93,12 +93,63 @@ Checklist before presenting any cash number:
 
 1. `tieout.period_delta == 0` — overall classified flow == bank delta.
 2. Every `tieout.per_month[].delta == 0` — no single month is off.
-3. Row 45 `check == 0` and row 9999 `unclassified == 0`.
+3. Row 45 `check == 0` and the `unclassified` row `== 0`.
 4. Internal consistency: row 41 `total_change` == row 21 + row 31 + row 39, and
    == row 44 − row 43.
 
 If any fails, lead with the discrepancy. A non-zero `period_delta` means the
 books don't reconcile to the bank — the figures are not trustworthy yet.
+
+## Cash composition — the split behind the level
+
+`get_cash_composition` answers "cash by currency / by bank"; the cash flow answers
+"how much, and did it tie out". Rows are identified by `role` + `pool`, never by
+label or position:
+
+| `role` | `pool` | Meaning |
+|---|---|---|
+| *(none)* | `cash` / `cc` | A per-account (per-bank / per-card) row — only under `density="detail"` |
+| `currency_subtotal` | `cash` / `cc` | **The by-currency answer.** One per currency block, closing it. Quote verbatim |
+| `total_cash_pool` | `cash` | All bank accounts. This is what ties to the cash flow |
+| `total_cc_pool` | `cc` | All credit-card accounts, kept visibly separate |
+| `closing_cash` | — | The position at the period end |
+| `check` | — | Should be 0 |
+
+Ordering: cash pool first (currency blocks ascending, `"Unspecified"` last, each
+closed by its `currency_subtotal`) → `total_cash_pool` → the cc pool in the same
+shape → `total_cc_pool` → `closing_cash` → `check`.
+
+`totals` carries `total_cash_pool`, `total_cc_pool`, `closing_cash`,
+`cf_closing_cash`, `tie_delta`, `pool_configured`, `basis`.
+
+Composition rows carry **no `row_num`** (unlike the templated statement reports) —
+`role` + `pool` + `account_currency` is the identity. Read the headline figures
+from the totals-keys above (`closing_cash`, `total_cash_pool`, `total_cc_pool`),
+the per-bank rows by `account_no`, and the per-currency subtotals by their
+`currency_subtotal` rows — the one identity that is not a totals-key. The cash
+flow's own `closing_cash` from the paired call ties to the same figure.
+
+Checklist before presenting a split:
+
+1. `totals.tie_delta == 0` — the composition's closing cash equals the cash flow's
+   `closing_cash_end`. Non-zero ⇒ lead with it and treat every figure as suspect.
+2. `totals.pool_configured` is `true`. `false` ⇒ no account was ever flagged as a
+   bank / card account — say "the cash pool isn't set up; flag the bank accounts in
+   Settings → Accounts", **not** "$0 cash".
+3. `totals.basis == "reporting"` ⇒ state it: figures are in the entity's reporting
+   currency, only *grouped by* each account's denomination. Not native amounts —
+   never render an ILS-denominated account's balance as "₪X".
+
+Row money fields: `balance` (month-end position), `series` / `trend` (aligned
+month-end positions, `null` where there's no backing data), `opening`. A row's
+`account_currency` is the account's **denomination**; the report's single top-level
+`currency` caption is the **presentation** currency. Different things.
+
+`list_accounts(cash_pool_only=true)` enumerates the pool as **metadata** —
+`account_no`, `account_desc`, `currency`, `is_pl`, `is_cash_pool` / `is_cc_pool`,
+`classification`, `has_period_activity`. No amounts, and none may be derived from
+it. Prefer `cash_pool_only=true` over paging the chart: a flagged pool account with
+no journal activity sorts to the tail of the listing and one page won't reach it.
 
 ## Burn / runway recipe
 
@@ -108,8 +159,11 @@ avg_burn             = mean(operating_burn over trailing 3–6 months)
 runway_months        = current_cash / avg_burn   # None if avg_burn <= 0
 ```
 
-- **current_cash**: closing cash (CF row 44), the dashboard cash KPI, or balance
-  sheet row 5 — they should agree at a period end.
+- **current_cash**: `get_cash_flow_direct`'s `totals.closing_cash_end`, or
+  `get_cash_composition`'s resolved pool total — they should agree at a period
+  end. NOT a row number, and NOT the balance sheet's own cash line: a BS leaf
+  carries no identity on the wire, so "balance sheet row 5" is whichever asset
+  that company's routing happened to order first.
 - **Operating vs total**: burn off `net_operating`, never off `total_change`
   (which mixes in financing/investing one-offs like a SAFE raise).
 - **Unbounded**: burn ≤ 0 (a cash-generating month) → runway is `None`/unbounded,
@@ -120,7 +174,7 @@ runway_months        = current_cash / avg_burn   # None if avg_burn <= 0
 
 ## Script
 
-`scripts/burn_runway.py` (stdlib + `lucid_utils` via `CLAUDE_PLUGIN_ROOT`):
+`scripts/burn_runway.py` (stdlib + `lucid_utils`, its sibling in `scripts/`):
 
 - `burn --periods a.json b.json c.json --cash N` — pulls `totals.net_operating`
   from each single-period CF file, averages the burn, derives runway.
